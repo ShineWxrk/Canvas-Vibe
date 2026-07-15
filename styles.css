@@ -20,6 +20,28 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	animation: none !important;
 }
 
+/*
+ * Far zoom overview: keep auras visible, drop only expensive motion/blur.
+ */
+.intuition-canvas-far-zoom .intuition-image-aura {
+	animation: none !important;
+	filter: none !important;
+	will-change: auto !important;
+	visibility: visible !important;
+	opacity: calc(var(--intuition-aura-strength, 0.5) * 0.9) !important;
+	/* Cap scale — oversized washes thrash compositor */
+	transform: translate(-50%, -50%) scale(1) !important;
+	width: 100% !important;
+	height: 100% !important;
+}
+
+.intuition-canvas-far-zoom .intuition-image-aura__blob {
+	animation: none !important;
+	filter: none !important;
+	will-change: auto !important;
+	visibility: visible !important;
+}
+
 /* Glare is useless at overview and still costly */
 .intuition-canvas-far-zoom .intuition-vibe-glare {
 	animation: none !important;
@@ -28,6 +50,12 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	visibility: hidden !important;
 	pointer-events: none !important;
 	will-change: auto !important;
+}
+
+.intuition-canvas-far-zoom .intuition-vibe-sparkles-canvas {
+	visibility: hidden !important;
+	opacity: 0 !important;
+	pointer-events: none !important;
 }
 
 .intuition-canvas-panning .canvas-node-container[data-intuition-vibe-tilting="1"],

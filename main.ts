@@ -69,8 +69,11 @@ const HIDE_CLASS = "intuition-canvas-hide-image-labels";
 const HIDE_AURAS_CLASS = "intuition-canvas-hide-auras";
 /** When canvas zoom is below this, use lite auras (no shimmer/sparkles). */
 const FAR_ZOOM_CLASS = "intuition-canvas-far-zoom";
-/** Only at deep overview — typical working zoom stays full FX. */
-const FAR_ZOOM_THRESHOLD = 0.1;
+/**
+ * Overview / sharp zoom-out: full blur+blob auras thrash the compositor
+ * (photos blank, UI flicker). Lite FX only on deep overview; normal / close zoom stays full.
+ */
+const FAR_ZOOM_THRESHOLD = 0.18;
 const ZOOM_HOOK_ATTR = "data-intuition-zoom-fx";
 /** While panning/scrolling the board — pause auras/sparkles + clear tilt. */
 const PANNING_CLASS = "intuition-canvas-panning";
@@ -80,6 +83,8 @@ const PANNING_CLASS = "intuition-canvas-panning";
  * apply the same during zoom itself.
  */
 const ZOOM_SETTLING_CLASS = "intuition-canvas-zoom-settling";
+/** Relative |Δzoom|/prev — restart aura CSS animations (never hide). */
+const SHARP_ZOOM_REL = 0.1;
 const DOM_HOOK_ATTR = "data-intuition-canvas-resize-hook";
 const TEXT_HOOK_ATTR = "data-intuition-canvas-text-hook";
 
@@ -242,6 +247,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	>();
 	private panIdleTimers = new Map<string, number>();
 	private zoomIdleTimers = new Map<string, number>();
+	private auraRestartTimers = new Map<string, number>();
 
 	async onload() {
 		await this.loadSettings();
@@ -353,6 +359,8 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		this.panIdleTimers.clear();
 		for (const t of this.zoomIdleTimers.values()) window.clearTimeout(t);
 		this.zoomIdleTimers.clear();
+		for (const t of this.auraRestartTimers.values()) window.clearTimeout(t);
+		this.auraRestartTimers.clear();
 		document.querySelectorAll(".intuition-vibe-sparkle").forEach((el) => el.remove());
 		document
 			.querySelectorAll("[data-intuition-vibe-sparkles-canvas]")
@@ -943,6 +951,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		const id = (leaf as WorkspaceLeaf & { id?: string }).id ?? String(leaf);
 		const zoom = this.readCanvasZoom(view);
 		const far = zoom > 0 && zoom < FAR_ZOOM_THRESHOLD;
+		const wasFar = this.zoomFarByLeaf.get(id) ?? false;
 
 		root.classList.toggle(FAR_ZOOM_CLASS, far);
 		view.containerEl.classList.toggle(FAR_ZOOM_CLASS, far);
@@ -951,6 +960,11 @@ export default class IntuitionCanvasPlugin extends Plugin {
 
 		this.vibeSparkles.get(id)?.setZoom(zoom);
 		this.vibeControllers.get(id)?.setZoom(zoom);
+
+		/* Leaving overview — kick breathe/drift back on (far CSS had animation:none). */
+		if (wasFar && !far) {
+			this.queueAuraRestart(leaf);
+		}
 
 		const canvas = view.canvas;
 		const x = canvas?.tx ?? canvas?.x ?? 0;
@@ -964,6 +978,12 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			if (zoomed) {
 				this.setCanvasZoomSettling(leaf, true);
 				this.setCanvasZoomSettling(leaf, false);
+				const rel =
+					Math.abs(zoom - prev.zoom) / Math.max(prev.zoom, 0.001);
+				/* Only restart while already in full-FX zoom — never while far CSS wins. */
+				if (rel >= SHARP_ZOOM_REL && !far) {
+					this.queueAuraRestart(leaf);
+				}
 			}
 			if (moved && !zoomed) {
 				this.setCanvasPanning(leaf, true);
@@ -972,6 +992,52 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		}
 
 		if (canvas?.isDragging) this.setCanvasPanning(leaf, true);
+	}
+
+	/**
+	 * Debounced CSS animation restart (auras stay visible).
+	 * Skips while far-zoom lite CSS is active.
+	 */
+	private queueAuraRestart(leaf: WorkspaceLeaf) {
+		const id = (leaf as WorkspaceLeaf & { id?: string }).id ?? String(leaf);
+		const view = leaf.view as CanvasViewLike;
+		const prev = this.auraRestartTimers.get(id);
+		if (prev) window.clearTimeout(prev);
+		const t = window.setTimeout(() => {
+			this.auraRestartTimers.delete(id);
+			if (this.zoomFarByLeaf.get(id)) return;
+			this.restartAuraAnimations(view);
+		}, 80);
+		this.auraRestartTimers.set(id, t);
+	}
+
+	/** Re-enable breathe/drift after far-zoom or a sharp near-zoom jump. */
+	private restartAuraAnimations(view: CanvasViewLike) {
+		const root =
+			view.canvas?.wrapperEl ??
+			view.containerEl.querySelector<HTMLElement>(".canvas-wrapper") ??
+			view.containerEl;
+		if (
+			root.classList.contains(FAR_ZOOM_CLASS) ||
+			view.containerEl.classList.contains(FAR_ZOOM_CLASS)
+		) {
+			return;
+		}
+
+		const auras = view.containerEl.querySelectorAll<HTMLElement>(
+			".intuition-image-aura, .intuition-image-aura__blob",
+		);
+		if (!auras.length) return;
+
+		auras.forEach((el) => {
+			el.style.setProperty("animation", "none");
+		});
+		void view.containerEl.offsetWidth;
+		requestAnimationFrame(() => {
+			auras.forEach((el) => {
+				el.style.removeProperty("animation");
+			});
+		});
 	}
 
 	/** Suspend media tilt briefly while zoom is still settling. */

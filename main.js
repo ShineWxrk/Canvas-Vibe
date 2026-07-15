@@ -3512,10 +3512,11 @@ var COLLAGE_BTN_ATTR = "data-intuition-canvas-collage";
 var HIDE_CLASS = "intuition-canvas-hide-image-labels";
 var HIDE_AURAS_CLASS = "intuition-canvas-hide-auras";
 var FAR_ZOOM_CLASS = "intuition-canvas-far-zoom";
-var FAR_ZOOM_THRESHOLD = 0.1;
+var FAR_ZOOM_THRESHOLD = 0.18;
 var ZOOM_HOOK_ATTR = "data-intuition-zoom-fx";
 var PANNING_CLASS = "intuition-canvas-panning";
 var ZOOM_SETTLING_CLASS = "intuition-canvas-zoom-settling";
+var SHARP_ZOOM_REL = 0.1;
 var DOM_HOOK_ATTR = "data-intuition-canvas-resize-hook";
 var TEXT_HOOK_ATTR = "data-intuition-canvas-text-hook";
 var DEFAULT_GLOBAL_AURA = {
@@ -3579,6 +3580,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.lastViewportByLeaf = /* @__PURE__ */ new Map();
     this.panIdleTimers = /* @__PURE__ */ new Map();
     this.zoomIdleTimers = /* @__PURE__ */ new Map();
+    this.auraRestartTimers = /* @__PURE__ */ new Map();
   }
   async onload() {
     await this.loadSettings();
@@ -3680,6 +3682,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.panIdleTimers.clear();
     for (const t of this.zoomIdleTimers.values()) window.clearTimeout(t);
     this.zoomIdleTimers.clear();
+    for (const t of this.auraRestartTimers.values()) window.clearTimeout(t);
+    this.auraRestartTimers.clear();
     document.querySelectorAll(".intuition-vibe-sparkle").forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-vibe-sparkles-canvas]").forEach((el) => el.remove());
     document.querySelectorAll(".intuition-image-aura").forEach((el) => el.remove());
@@ -4168,12 +4172,16 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const id = leaf.id ?? String(leaf);
     const zoom = this.readCanvasZoom(view);
     const far = zoom > 0 && zoom < FAR_ZOOM_THRESHOLD;
+    const wasFar = this.zoomFarByLeaf.get(id) ?? false;
     root.classList.toggle(FAR_ZOOM_CLASS, far);
     view.containerEl.classList.toggle(FAR_ZOOM_CLASS, far);
     view.canvas?.canvasEl?.classList.toggle(FAR_ZOOM_CLASS, far);
     this.zoomFarByLeaf.set(id, far);
     this.vibeSparkles.get(id)?.setZoom(zoom);
     this.vibeControllers.get(id)?.setZoom(zoom);
+    if (wasFar && !far) {
+      this.queueAuraRestart(leaf);
+    }
     const canvas = view.canvas;
     const x = canvas?.tx ?? canvas?.x ?? 0;
     const y = canvas?.ty ?? canvas?.y ?? 0;
@@ -4185,6 +4193,10 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       if (zoomed) {
         this.setCanvasZoomSettling(leaf, true);
         this.setCanvasZoomSettling(leaf, false);
+        const rel = Math.abs(zoom - prev.zoom) / Math.max(prev.zoom, 1e-3);
+        if (rel >= SHARP_ZOOM_REL && !far) {
+          this.queueAuraRestart(leaf);
+        }
       }
       if (moved && !zoomed) {
         this.setCanvasPanning(leaf, true);
@@ -4192,6 +4204,42 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       }
     }
     if (canvas?.isDragging) this.setCanvasPanning(leaf, true);
+  }
+  /**
+   * Debounced CSS animation restart (auras stay visible).
+   * Skips while far-zoom lite CSS is active.
+   */
+  queueAuraRestart(leaf) {
+    const id = leaf.id ?? String(leaf);
+    const view = leaf.view;
+    const prev = this.auraRestartTimers.get(id);
+    if (prev) window.clearTimeout(prev);
+    const t = window.setTimeout(() => {
+      this.auraRestartTimers.delete(id);
+      if (this.zoomFarByLeaf.get(id)) return;
+      this.restartAuraAnimations(view);
+    }, 80);
+    this.auraRestartTimers.set(id, t);
+  }
+  /** Re-enable breathe/drift after far-zoom or a sharp near-zoom jump. */
+  restartAuraAnimations(view) {
+    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
+    if (root.classList.contains(FAR_ZOOM_CLASS) || view.containerEl.classList.contains(FAR_ZOOM_CLASS)) {
+      return;
+    }
+    const auras = view.containerEl.querySelectorAll(
+      ".intuition-image-aura, .intuition-image-aura__blob"
+    );
+    if (!auras.length) return;
+    auras.forEach((el) => {
+      el.style.setProperty("animation", "none");
+    });
+    void view.containerEl.offsetWidth;
+    requestAnimationFrame(() => {
+      auras.forEach((el) => {
+        el.style.removeProperty("animation");
+      });
+    });
   }
   /** Suspend media tilt briefly while zoom is still settling. */
   setCanvasZoomSettling(leaf, on) {
