@@ -1,9 +1,10 @@
 {
 	"id": "intuition-canvas",
-	"name": "Intuition Canvas",
+	"name": "Canvas Vibe",
 	"version": "0.9.2",
 	"minAppVersion": "1.5.0",
-	"description": "Personal Canvas enhancements — starting with a toggle to hide image filename labels.",
-	"author": "intuition",
+	"description": "Canvas moodboard tools: soft image auras, vibe tilt & sparkles, collage layout, and label/chrome tweaks.",
+	"author": "ShineWxrk",
+	"authorUrl": "https://github.com/ShineWxrk",
 	"isDesktopOnly": false
 }

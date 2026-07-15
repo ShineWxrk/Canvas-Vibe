@@ -768,6 +768,10 @@ function applyImageStylesToCanvas(nodes) {
 var COLLAGE_FIXED_SIZE_MIN = 16;
 var COLLAGE_FIXED_SIZE_MAX = 4096;
 var COLLAGE_FIXED_SIZE_DEFAULT = 240;
+var COLLAGE_GAP_MIN = 0;
+var COLLAGE_GAP_MAX = 500;
+var COLLAGE_GAP_SLIDER_MAX = 200;
+var COLLAGE_GAP_DEFAULT = 16;
 function layoutMasonry(items, opts) {
   const out = /* @__PURE__ */ new Map();
   if (!items.length) return out;
@@ -911,6 +915,13 @@ function clampCollageFixedSize(value) {
   return Math.min(
     COLLAGE_FIXED_SIZE_MAX,
     Math.max(COLLAGE_FIXED_SIZE_MIN, Math.round(value))
+  );
+}
+function clampCollageGap(value) {
+  if (!Number.isFinite(value)) return COLLAGE_GAP_DEFAULT;
+  return Math.min(
+    COLLAGE_GAP_MAX,
+    Math.max(COLLAGE_GAP_MIN, Math.round(value))
   );
 }
 function normalizeCollageSizeMode(value) {
@@ -1220,7 +1231,7 @@ var ImageStylePanel = class {
       type: "range",
       attr: {
         min: "0",
-        max: "80",
+        max: String(COLLAGE_GAP_SLIDER_MAX),
         step: "1",
         "aria-label": "\u0417\u0430\u0437\u043E\u0440 \u043C\u0435\u0436\u0434\u0443 \u0444\u043E\u0442\u043E"
       }
@@ -1230,14 +1241,14 @@ var ImageStylePanel = class {
       cls: "intuition-panel__number",
       attr: {
         min: "0",
-        max: "80",
+        max: String(COLLAGE_GAP_MAX),
         step: "1",
         "aria-label": "\u0417\u0430\u0437\u043E\u0440 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445"
       }
     });
     const applyGap = (raw) => {
-      const gap = Math.min(80, Math.max(0, Math.round(raw)));
-      this.collageGap.value = String(gap);
+      const gap = clampCollageGap(raw);
+      this.collageGap.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
       this.collageGapPx.value = String(gap);
       this.collageHooks?.onGapChange(gap);
     };
@@ -1487,8 +1498,8 @@ var ImageStylePanel = class {
     const show = this.nodes.length >= 2 && !!this.collageHooks;
     if (show) {
       const hooks = this.collageHooks;
-      const gap = Math.min(80, Math.max(0, Math.round(hooks.getGap())));
-      this.collageGap.value = String(gap);
+      const gap = clampCollageGap(hooks.getGap());
+      this.collageGap.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
       this.collageGapPx.value = String(gap);
       const mode = normalizeCollageSizeMode(hooks.getSizeMode());
       this.collageMode.value = mode;
@@ -3809,7 +3820,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       migrated = true;
     }
     this.settings.vibeSparkle = this.settings.vibeSparkles.amount;
-    this.settings.collageGap = this.clampCollageGap(
+    this.settings.collageGap = clampCollageGap(
       this.settings.collageGap ?? DEFAULT_SETTINGS.collageGap
     );
     this.settings.collageSizeMode = normalizeCollageSizeMode(
@@ -4868,9 +4879,9 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
     const panel = new ImageStylePanel(host);
     panel.setCollageHooks({
-      getGap: () => this.clampCollageGap(this.settings.collageGap),
+      getGap: () => clampCollageGap(this.settings.collageGap),
       onGapChange: (gap) => {
-        this.settings.collageGap = this.clampCollageGap(gap);
+        this.settings.collageGap = clampCollageGap(gap);
         this.queueCollageSettingsSave();
         this.syncAllCollageButtons();
       },
@@ -5078,24 +5089,26 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
-    slider.max = "80";
+    slider.max = String(COLLAGE_GAP_SLIDER_MAX);
     slider.step = "1";
     slider.className = "intuition-collage-panel__slider";
-    slider.value = String(this.clampCollageGap(this.settings.collageGap));
+    slider.value = String(
+      Math.min(COLLAGE_GAP_SLIDER_MAX, clampCollageGap(this.settings.collageGap))
+    );
     slider.setAttribute("aria-label", "\u0417\u0430\u0437\u043E\u0440 \u043C\u0435\u0436\u0434\u0443 \u0444\u043E\u0442\u043E");
     slider.setAttribute("data-collage-gap", "1");
     const gapInput = document.createElement("input");
     gapInput.type = "number";
     gapInput.min = "0";
-    gapInput.max = "80";
+    gapInput.max = String(COLLAGE_GAP_MAX);
     gapInput.step = "1";
     gapInput.className = "intuition-collage-panel__number";
-    gapInput.value = String(this.clampCollageGap(this.settings.collageGap));
+    gapInput.value = String(clampCollageGap(this.settings.collageGap));
     gapInput.setAttribute("aria-label", "\u0417\u0430\u0437\u043E\u0440 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445");
     gapInput.setAttribute("data-collage-gap-px", "1");
     const applyGap = (raw) => {
-      const gap = this.clampCollageGap(raw);
-      slider.value = String(gap);
+      const gap = clampCollageGap(raw);
+      slider.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
       gapInput.value = String(gap);
       this.settings.collageGap = gap;
       this.queueCollageSettingsSave();
@@ -5265,13 +5278,13 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     if (!panel.hidden) this.syncCollagePanelControls(panel);
   }
   syncCollagePanelControls(panel) {
-    const gap = this.clampCollageGap(this.settings.collageGap);
+    const gap = clampCollageGap(this.settings.collageGap);
     const mode = normalizeCollageSizeMode(this.settings.collageSizeMode);
     const axis = normalizeCollageFixedAxis(this.settings.collageFixedAxis);
     const size = clampCollageFixedSize(this.settings.collageFixedSize);
     const slider = panel.querySelector("[data-collage-gap]");
     const gapPx = panel.querySelector("[data-collage-gap-px]");
-    if (slider) slider.value = String(gap);
+    if (slider) slider.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
     if (gapPx) gapPx.value = String(gap);
     const modeSelect = panel.querySelector("[data-collage-mode]");
     if (modeSelect) modeSelect.value = mode;
@@ -5292,7 +5305,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     if (!button) return;
     const id = leaf.id ?? String(leaf);
     const open = !(this.collagePanels.get(id)?.hidden ?? true);
-    const gap = this.clampCollageGap(this.settings.collageGap);
+    const gap = clampCollageGap(this.settings.collageGap);
     button.classList.toggle("is-active", open);
     (0, import_obsidian4.setIcon)(button, "layout-grid");
     (0, import_obsidian4.setTooltip)(button, open ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" : "\u041A\u043E\u043B\u043B\u0430\u0436", {
@@ -5319,8 +5332,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     }
   }
   clampCollageGap(value) {
-    if (!Number.isFinite(value)) return DEFAULT_SETTINGS.collageGap;
-    return Math.min(80, Math.max(0, Math.round(value)));
+    return clampCollageGap(value);
   }
   queueCollageSettingsSave() {
     if (this.collageGapSaveTimer) window.clearTimeout(this.collageGapSaveTimer);
@@ -5336,7 +5348,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       new import_obsidian4.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B 2 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438", 1600);
       return;
     }
-    const gap = this.clampCollageGap(this.settings.collageGap);
+    const gap = clampCollageGap(this.settings.collageGap);
     const mode = normalizeCollageSizeMode(this.settings.collageSizeMode);
     const axis = normalizeCollageFixedAxis(this.settings.collageFixedAxis);
     const fixedSize = clampCollageFixedSize(this.settings.collageFixedSize);

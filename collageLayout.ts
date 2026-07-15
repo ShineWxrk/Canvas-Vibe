@@ -6,6 +6,11 @@ export type CollageFixedAxis = "width" | "height";
 export const COLLAGE_FIXED_SIZE_MIN = 16;
 export const COLLAGE_FIXED_SIZE_MAX = 4096;
 export const COLLAGE_FIXED_SIZE_DEFAULT = 240;
+export const COLLAGE_GAP_MIN = 0;
+/** Manual px input + clamp; slider may use a lower max for easy dragging. */
+export const COLLAGE_GAP_MAX = 500;
+export const COLLAGE_GAP_SLIDER_MAX = 200;
+export const COLLAGE_GAP_DEFAULT = 16;
 
 export interface MasonryItem {
 	id: string;
@@ -276,6 +281,14 @@ export function clampCollageFixedSize(value: number): number {
 	return Math.min(
 		COLLAGE_FIXED_SIZE_MAX,
 		Math.max(COLLAGE_FIXED_SIZE_MIN, Math.round(value)),
+	);
+}
+
+export function clampCollageGap(value: number): number {
+	if (!Number.isFinite(value)) return COLLAGE_GAP_DEFAULT;
+	return Math.min(
+		COLLAGE_GAP_MAX,
+		Math.max(COLLAGE_GAP_MIN, Math.round(value)),
 	);
 }
 

@@ -46,9 +46,12 @@ import {
 	aspectFromImageNode,
 	boundingBox,
 	clampCollageFixedSize,
+	clampCollageGap,
 	COLLAGE_FIXED_SIZE_DEFAULT,
 	COLLAGE_FIXED_SIZE_MAX,
 	COLLAGE_FIXED_SIZE_MIN,
+	COLLAGE_GAP_MAX,
+	COLLAGE_GAP_SLIDER_MAX,
 	layoutMasonry,
 	layoutRowPack,
 	normalizeCollageFixedAxis,
@@ -534,7 +537,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		}
 		// Keep legacy field in sync for older backups
 		this.settings.vibeSparkle = this.settings.vibeSparkles.amount;
-		this.settings.collageGap = this.clampCollageGap(
+		this.settings.collageGap = clampCollageGap(
 			this.settings.collageGap ?? DEFAULT_SETTINGS.collageGap,
 		);
 		this.settings.collageSizeMode = normalizeCollageSizeMode(
@@ -1790,9 +1793,9 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			view.containerEl;
 		const panel = new ImageStylePanel(host);
 		panel.setCollageHooks({
-			getGap: () => this.clampCollageGap(this.settings.collageGap),
+			getGap: () => clampCollageGap(this.settings.collageGap),
 			onGapChange: (gap) => {
-				this.settings.collageGap = this.clampCollageGap(gap);
+				this.settings.collageGap = clampCollageGap(gap);
 				this.queueCollageSettingsSave();
 				this.syncAllCollageButtons();
 			},
@@ -2077,26 +2080,28 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		const slider = document.createElement("input");
 		slider.type = "range";
 		slider.min = "0";
-		slider.max = "80";
+		slider.max = String(COLLAGE_GAP_SLIDER_MAX);
 		slider.step = "1";
 		slider.className = "intuition-collage-panel__slider";
-		slider.value = String(this.clampCollageGap(this.settings.collageGap));
+		slider.value = String(
+			Math.min(COLLAGE_GAP_SLIDER_MAX, clampCollageGap(this.settings.collageGap)),
+		);
 		slider.setAttribute("aria-label", "Зазор между фото");
 		slider.setAttribute("data-collage-gap", "1");
 
 		const gapInput = document.createElement("input");
 		gapInput.type = "number";
 		gapInput.min = "0";
-		gapInput.max = "80";
+		gapInput.max = String(COLLAGE_GAP_MAX);
 		gapInput.step = "1";
 		gapInput.className = "intuition-collage-panel__number";
-		gapInput.value = String(this.clampCollageGap(this.settings.collageGap));
+		gapInput.value = String(clampCollageGap(this.settings.collageGap));
 		gapInput.setAttribute("aria-label", "Зазор в пикселях");
 		gapInput.setAttribute("data-collage-gap-px", "1");
 
 		const applyGap = (raw: number) => {
-			const gap = this.clampCollageGap(raw);
-			slider.value = String(gap);
+			const gap = clampCollageGap(raw);
+			slider.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
 			gapInput.value = String(gap);
 			this.settings.collageGap = gap;
 			this.queueCollageSettingsSave();
@@ -2288,14 +2293,14 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	}
 
 	private syncCollagePanelControls(panel: HTMLElement) {
-		const gap = this.clampCollageGap(this.settings.collageGap);
+		const gap = clampCollageGap(this.settings.collageGap);
 		const mode = normalizeCollageSizeMode(this.settings.collageSizeMode);
 		const axis = normalizeCollageFixedAxis(this.settings.collageFixedAxis);
 		const size = clampCollageFixedSize(this.settings.collageFixedSize);
 
 		const slider = panel.querySelector<HTMLInputElement>("[data-collage-gap]");
 		const gapPx = panel.querySelector<HTMLInputElement>("[data-collage-gap-px]");
-		if (slider) slider.value = String(gap);
+		if (slider) slider.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
 		if (gapPx) gapPx.value = String(gap);
 
 		const modeSelect = panel.querySelector<HTMLSelectElement>("[data-collage-mode]");
@@ -2325,7 +2330,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		if (!button) return;
 		const id = (leaf as WorkspaceLeaf & { id?: string }).id ?? String(leaf);
 		const open = !(this.collagePanels.get(id)?.hidden ?? true);
-		const gap = this.clampCollageGap(this.settings.collageGap);
+		const gap = clampCollageGap(this.settings.collageGap);
 		button.classList.toggle("is-active", open);
 		setIcon(button, "layout-grid");
 		setTooltip(button, open ? "Скрыть настройки коллажа" : "Коллаж", {
@@ -2354,8 +2359,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	}
 
 	clampCollageGap(value: number) {
-		if (!Number.isFinite(value)) return DEFAULT_SETTINGS.collageGap;
-		return Math.min(80, Math.max(0, Math.round(value)));
+		return clampCollageGap(value);
 	}
 
 	private queueCollageSettingsSave() {
@@ -2374,7 +2378,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			return;
 		}
 
-		const gap = this.clampCollageGap(this.settings.collageGap);
+		const gap = clampCollageGap(this.settings.collageGap);
 		const mode = normalizeCollageSizeMode(this.settings.collageSizeMode);
 		const axis = normalizeCollageFixedAxis(this.settings.collageFixedAxis);
 		const fixedSize = clampCollageFixedSize(this.settings.collageFixedSize);

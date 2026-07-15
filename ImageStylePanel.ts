@@ -11,8 +11,11 @@ import {
 } from "./imageStyles";
 import {
 	clampCollageFixedSize,
+	clampCollageGap,
 	COLLAGE_FIXED_SIZE_MAX,
 	COLLAGE_FIXED_SIZE_MIN,
+	COLLAGE_GAP_MAX,
+	COLLAGE_GAP_SLIDER_MAX,
 	normalizeCollageFixedAxis,
 	normalizeCollageSizeMode,
 	restoreNaturalAspectPreservingArea,
@@ -347,7 +350,7 @@ export class ImageStylePanel {
 			type: "range",
 			attr: {
 				min: "0",
-				max: "80",
+				max: String(COLLAGE_GAP_SLIDER_MAX),
 				step: "1",
 				"aria-label": "Зазор между фото",
 			},
@@ -357,14 +360,14 @@ export class ImageStylePanel {
 			cls: "intuition-panel__number",
 			attr: {
 				min: "0",
-				max: "80",
+				max: String(COLLAGE_GAP_MAX),
 				step: "1",
 				"aria-label": "Зазор в пикселях",
 			},
 		});
 		const applyGap = (raw: number) => {
-			const gap = Math.min(80, Math.max(0, Math.round(raw)));
-			this.collageGap.value = String(gap);
+			const gap = clampCollageGap(raw);
+			this.collageGap.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
 			this.collageGapPx.value = String(gap);
 			this.collageHooks?.onGapChange(gap);
 		};
@@ -647,8 +650,8 @@ export class ImageStylePanel {
 		const show = this.nodes.length >= 2 && !!this.collageHooks;
 		if (show) {
 			const hooks = this.collageHooks!;
-			const gap = Math.min(80, Math.max(0, Math.round(hooks.getGap())));
-			this.collageGap.value = String(gap);
+			const gap = clampCollageGap(hooks.getGap());
+			this.collageGap.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
 			this.collageGapPx.value = String(gap);
 
 			const mode = normalizeCollageSizeMode(hooks.getSizeMode());
