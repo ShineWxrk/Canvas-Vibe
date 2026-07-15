@@ -1,0 +1,19 @@
+{
+	"name": "intuition-canvas",
+	"version": "0.1.0",
+	"description": "Personal Canvas enhancements for Obsidian",
+	"main": "main.js",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+	},
+	"keywords": [],
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^20.11.0",
+		"esbuild": "^0.25.0",
+		"obsidian": "latest",
+		"tslib": "^2.6.2",
+		"typescript": "^5.3.3"
+	}
+}

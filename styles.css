@@ -1,0 +1,1113 @@
+/* Hide all Canvas node labels (file names + group titles) */
+body.intuition-canvas-hide-image-labels .canvas-node-label,
+.workspace-leaf-content[data-type="canvas"].intuition-canvas-hide-image-labels .canvas-node-label,
+.canvas.intuition-canvas-hide-image-labels .canvas-node-label {
+	display: none !important;
+	visibility: hidden !important;
+	opacity: 0 !important;
+	pointer-events: none !important;
+}
+
+/* Hide image auras globally */
+body.intuition-canvas-hide-auras .intuition-image-aura,
+.workspace-leaf-content[data-type="canvas"].intuition-canvas-hide-auras
+	.intuition-image-aura,
+.canvas.intuition-canvas-hide-auras .intuition-image-aura {
+	display: none !important;
+	visibility: hidden !important;
+	opacity: 0 !important;
+	pointer-events: none !important;
+	animation: none !important;
+}
+
+/* Glare is useless at overview and still costly */
+.intuition-canvas-far-zoom .intuition-vibe-glare {
+	animation: none !important;
+	filter: none !important;
+	opacity: 0 !important;
+	visibility: hidden !important;
+	pointer-events: none !important;
+	will-change: auto !important;
+}
+
+.intuition-canvas-panning .canvas-node-container[data-intuition-vibe-tilting="1"],
+.intuition-canvas-panning .intuition-vibe-tilt-plane {
+	transform: none !important;
+	transition: none !important;
+	will-change: auto !important;
+}
+
+.intuition-canvas-panning .intuition-vibe-glare {
+	opacity: 0 !important;
+	visibility: hidden !important;
+}
+
+/* Zoom settling: force-flat leftover tilt (wheel can outrun JS clear) */
+.intuition-canvas-zoom-settling .canvas-node-container[data-intuition-vibe-tilting="1"],
+.intuition-canvas-zoom-settling .intuition-vibe-tilt-plane {
+	transform: none !important;
+	transition: none !important;
+	will-change: auto !important;
+}
+
+.intuition-canvas-zoom-settling .intuition-vibe-glare {
+	opacity: 0 !important;
+	visibility: hidden !important;
+}
+
+/* Active state for our control button */
+.canvas-controls .intuition-canvas-toggle.is-active {
+	color: var(--interactive-accent);
+}
+
+/* ── Vibe mode: near-cursor tilt + soft glare (media); text glow ─── */
+
+/*
+ * Avoid promote-layer tricks on every media card (translateZ / will-change).
+ * Nested under Obsidian's canvas scale(), those blank sibling paint after sharp zoom.
+ * 3D tilt is applied inline only on active winners; flat peers stay transform-free.
+ */
+.intuition-canvas-vibe .canvas-node[data-intuition-image="1"] .canvas-node-container,
+.intuition-canvas-vibe .canvas-node:has(img) .canvas-node-container,
+.intuition-canvas-vibe .canvas-node:has(.media-embed) .canvas-node-container,
+.intuition-canvas-vibe .canvas-node:has(.image-embed) .canvas-node-container,
+.intuition-canvas-vibe .canvas-node.is-file .canvas-node-container,
+.intuition-canvas-vibe .canvas-node.is-media .canvas-node-container {
+	isolation: isolate;
+	transform-style: flat;
+	backface-visibility: hidden;
+}
+
+/* Inner plane leftover from experiments — unwrap happens in JS; hide if orphaned */
+.intuition-vibe-tilt-plane {
+	width: 100%;
+	height: 100%;
+	transform-origin: center center;
+	border-radius: inherit;
+}
+
+/* Text glow on glyph hover — keep overflow visible so drop-shadow isn't clipped */
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"],
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"] .canvas-node-container,
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"] .canvas-node-content,
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"] .markdown-preview-view,
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"] .markdown-source-view,
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"] .cm-editor,
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"] .cm-scroller,
+.intuition-canvas-vibe .canvas-node[data-intuition-vibe-text="1"] .cm-content {
+	overflow: visible !important;
+	clip-path: none !important;
+}
+
+.intuition-vibe-glare {
+	position: absolute;
+	inset: 0;
+	z-index: 6;
+	pointer-events: none;
+	border-radius: inherit;
+	opacity: 0;
+	transition: opacity 0.28s ease-out;
+	mix-blend-mode: soft-light;
+}
+
+/* ── Canvas chrome (background + dots) ─────────────────────────────── */
+
+.intuition-canvas-panel {
+	position: absolute;
+	left: 16px;
+	top: 16px;
+	z-index: 50;
+	width: min(280px, calc(100% - 32px));
+	padding: 12px 14px 14px;
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+	border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
+	backdrop-filter: blur(10px);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+	color: var(--text-normal);
+	font-size: 12px;
+}
+
+.workspace-leaf-content[data-type="canvas"].intuition-canvas-chrome,
+.canvas-wrapper.intuition-canvas-chrome {
+	--canvas-background: var(--intuition-canvas-bg, var(--background-primary));
+	--canvas-dot-pattern: var(--intuition-dot-color, var(--canvas-dot-pattern));
+}
+
+.intuition-canvas-chrome svg.canvas-background,
+.canvas-wrapper.intuition-canvas-chrome svg.canvas-background {
+	background-color: var(--intuition-canvas-bg, var(--canvas-background, var(--background-primary))) !important;
+}
+
+/* Native dots: recolor; hide when toggled off */
+.intuition-canvas-chrome[data-intuition-dots="1"] svg.canvas-background circle,
+.canvas-wrapper.intuition-canvas-chrome[data-intuition-dots="1"] svg.canvas-background circle {
+	fill: var(--intuition-dot-color, var(--canvas-dot-pattern)) !important;
+	stroke: none !important;
+}
+
+.intuition-canvas-chrome[data-intuition-dots="0"] svg.canvas-background circle,
+.canvas-wrapper.intuition-canvas-chrome[data-intuition-dots="0"] svg.canvas-background circle {
+	display: none !important;
+	opacity: 0 !important;
+}
+
+/* Remove legacy custom overlays if somehow left in DOM */
+.intuition-dot-overlay,
+.intuition-dot-layer {
+	display: none !important;
+	pointer-events: none !important;
+}
+.intuition-vibe-panel {
+	position: absolute;
+	left: 16px;
+	bottom: 16px;
+	z-index: 120;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: min(280px, calc(100% - 32px));
+	max-height: min(70vh, 520px);
+	overflow-y: auto;
+	padding: 12px 14px 14px;
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+	border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
+	backdrop-filter: blur(10px);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+	color: var(--text-normal);
+	font-size: 12px;
+}
+
+.intuition-vibe-panel[hidden] {
+	display: none !important;
+}
+
+.intuition-collage-panel {
+	position: absolute;
+	right: 56px;
+	bottom: 16px;
+	z-index: 50;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: min(280px, calc(100% - 80px));
+	padding: 12px 14px 14px;
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+	border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
+	backdrop-filter: blur(10px);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+	color: var(--text-normal);
+	font-size: 12px;
+}
+
+.intuition-collage-panel[hidden] {
+	display: none !important;
+}
+
+.intuition-collage-panel__title {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	color: var(--text-muted);
+}
+
+.intuition-collage-panel__row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.intuition-collage-panel__label {
+	flex: 0 0 42px;
+	color: var(--text-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.intuition-collage-panel__slider {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: 100%;
+}
+
+.intuition-collage-panel__value {
+	flex: 0 0 36px;
+	min-width: 36px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	font-size: 11px;
+}
+
+.intuition-collage-panel__select {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: 100%;
+	font-size: 12px;
+}
+
+.intuition-collage-panel__number {
+	flex: 0 0 64px;
+	width: 64px;
+	min-width: 64px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	font-size: 12px;
+}
+
+.intuition-collage-panel__fixed {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.intuition-collage-panel__fixed[hidden] {
+	display: none !important;
+}
+
+.intuition-collage-panel__apply {
+	width: 100%;
+}
+
+.intuition-canvas-fps {
+	position: absolute;
+	right: 10px;
+	bottom: 8px;
+	z-index: 40;
+	pointer-events: none;
+	user-select: none;
+	font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+	font-size: 10px;
+	line-height: 1;
+	letter-spacing: 0.02em;
+	color: color-mix(in srgb, var(--text-muted) 85%, transparent);
+	opacity: 0.72;
+	text-shadow: 0 1px 2px color-mix(in srgb, var(--background-primary) 80%, transparent);
+}
+
+.intuition-vibe-panel__section {
+	margin-top: 4px;
+	padding-top: 6px;
+	border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	color: var(--text-muted);
+}
+
+.intuition-vibe-panel__accordion {
+	border-top: none;
+	margin-top: 8px;
+	padding-top: 4px;
+}
+
+.intuition-vibe-panel__accordion:first-child {
+	margin-top: 0;
+	padding-top: 0;
+}
+
+.intuition-vibe-panel__accordion-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	padding: 4px 0 6px;
+	margin: 0;
+	border: none;
+	background: transparent !important;
+	box-shadow: none !important;
+	color: var(--text-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	cursor: pointer;
+	text-align: left;
+	outline: none;
+}
+
+.intuition-vibe-panel__accordion-head:hover,
+.intuition-vibe-panel__accordion-head:focus,
+.intuition-vibe-panel__accordion-head:active {
+	background: transparent !important;
+	box-shadow: none !important;
+	color: var(--text-normal);
+}
+
+.intuition-vibe-panel__accordion-chevron {
+	display: inline-flex;
+	width: 14px;
+	height: 14px;
+	opacity: 0.55;
+	transition: transform 120ms ease;
+	flex-shrink: 0;
+}
+
+.intuition-vibe-panel__accordion.is-open .intuition-vibe-panel__accordion-chevron {
+	transform: rotate(90deg);
+}
+
+.intuition-vibe-panel__accordion-title {
+	flex: 1;
+	font-weight: 600;
+}
+
+.intuition-vibe-panel__accordion-body {
+	display: none;
+	flex-direction: column;
+	gap: 8px;
+	padding: 2px 0 10px;
+	margin-bottom: 4px;
+}
+
+.intuition-vibe-panel__accordion.is-open > .intuition-vibe-panel__accordion-body {
+	display: flex;
+}
+
+.intuition-vibe-panel__row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.intuition-vibe-panel__label {
+	flex: 0 0 58px;
+	color: var(--text-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.intuition-vibe-panel__size {
+	flex: 1 1 auto;
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.intuition-vibe-panel__slider {
+	width: 100%;
+	min-width: 0;
+}
+
+.intuition-vibe-panel__value {
+	min-width: 40px;
+	text-align: right;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.intuition-vibe-panel__color {
+	flex: 1 1 auto;
+	height: 28px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+}
+
+.intuition-vibe-panel__row--full {
+	display: block;
+}
+
+.intuition-vibe-panel__reset {
+	width: 100%;
+	margin-top: 2px;
+	font-size: 12px;
+}
+
+/* Four-point glitter sparks around cards */
+.intuition-canvas-vibe .canvas-node.is-text,
+.intuition-canvas-vibe .canvas-node[data-intuition-image="1"] {
+	overflow: visible !important;
+}
+
+/*
+ * Masked single DIV sparkles (legacy) — replaced by canvas layer.
+ * Kept briefly unused so themes don't break; safe to delete later.
+ */
+.intuition-vibe-sparkle {
+	display: none !important;
+}
+
+.intuition-vibe-sparkles-canvas {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	z-index: 35;
+}
+
+/*
+ * Make Canvas image nodes grow with the frame.
+ * Obsidian normally caps images at their natural pixel size —
+ * without this the frame can look much larger than the photo.
+ * Prefer data-attr over :has() (cheaper with many nodes).
+ */
+.canvas-node[data-intuition-image="1"] .canvas-node-container,
+.canvas-node:has(img) .canvas-node-container,
+.canvas-node:has(.media-embed) .canvas-node-container,
+.canvas-node:has(.image-embed) .canvas-node-container {
+	width: 100% !important;
+	height: 100% !important;
+	padding: 0 !important;
+	overflow: hidden !important;
+	box-sizing: border-box !important;
+}
+
+.canvas-node[data-intuition-image="1"] .canvas-node-content,
+.canvas-node:has(img) .canvas-node-content,
+.canvas-node:has(.media-embed) .canvas-node-content,
+.canvas-node:has(.image-embed) .canvas-node-content {
+	width: 100% !important;
+	height: 100% !important;
+	padding: 0 !important;
+	margin: 0 !important;
+	overflow: hidden !important;
+	box-sizing: border-box !important;
+}
+
+.canvas-node[data-intuition-image="1"] .canvas-node-content > .media-embed,
+.canvas-node[data-intuition-image="1"] .canvas-node-content > .image-embed,
+.canvas-node[data-intuition-image="1"] .canvas-node-content > .internal-embed.media-embed,
+.canvas-node[data-intuition-image="1"] .canvas-node-content > .internal-embed.image-embed,
+.canvas-node .canvas-node-content > .media-embed,
+.canvas-node .canvas-node-content > .image-embed,
+.canvas-node .canvas-node-content > .internal-embed.media-embed,
+.canvas-node .canvas-node-content > .internal-embed.image-embed {
+	display: block !important;
+	width: 100% !important;
+	height: 100% !important;
+	max-width: none !important;
+	max-height: none !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	overflow: hidden !important;
+	box-sizing: border-box !important;
+}
+
+.canvas-node[data-intuition-image="1"] img,
+.canvas-node[data-intuition-image="1"] .media-embed img,
+.canvas-node[data-intuition-image="1"] .image-embed img,
+.canvas-node .canvas-node-content img,
+.canvas-node .media-embed img,
+.canvas-node .image-embed img {
+	display: block !important;
+	width: 100% !important;
+	height: 100% !important;
+	max-width: none !important;
+	max-height: none !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	object-fit: fill !important;
+	object-position: center center !important;
+}
+
+/* ── Plain text nodes (no card chrome) ─────────────────────────────── */
+
+.canvas-node.intuition-plain-text .canvas-node-container,
+.canvas-node[data-intuition-plain="1"] .canvas-node-container {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	backdrop-filter: none !important;
+}
+
+.canvas-node.intuition-plain-text.is-focused .canvas-node-container,
+.canvas-node.intuition-plain-text.is-selected .canvas-node-container,
+.canvas-node[data-intuition-plain="1"].is-focused .canvas-node-container,
+.canvas-node[data-intuition-plain="1"].is-selected .canvas-node-container {
+	background: transparent !important;
+	box-shadow: none !important;
+	outline: 1px dashed color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+}
+
+.canvas-node.intuition-plain-text .canvas-node-content,
+.canvas-node[data-intuition-plain="1"] .canvas-node-content {
+	padding: 8px 10px !important;
+	background: transparent !important;
+	overflow: visible !important;
+}
+
+/* Force glyph room: themes often set line-height in px → clips large fonts */
+.canvas-node.intuition-plain-text,
+.canvas-node[data-intuition-plain="1"],
+.canvas-node.intuition-plain-text .canvas-node-container,
+.canvas-node[data-intuition-plain="1"] .canvas-node-container {
+	overflow: visible !important;
+}
+
+.canvas-node.intuition-plain-text .markdown-preview-view,
+.canvas-node.intuition-plain-text .markdown-source-view,
+.canvas-node.intuition-plain-text .cm-editor,
+.canvas-node.intuition-plain-text .cm-scroller,
+.canvas-node.intuition-plain-text .cm-content,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view,
+.canvas-node[data-intuition-plain="1"] .markdown-source-view,
+.canvas-node[data-intuition-plain="1"] .cm-editor,
+.canvas-node[data-intuition-plain="1"] .cm-scroller,
+.canvas-node[data-intuition-plain="1"] .cm-content {
+	background: transparent !important;
+	font-family: var(--intuition-font-family, inherit) !important;
+	font-size: var(--intuition-font-size, inherit) !important;
+	font-weight: var(--intuition-font-weight, inherit) !important;
+	/* em-based — never inherit theme's 20px line-height with 96px font */
+	line-height: calc(var(--intuition-line-height, 1.35) * 1em) !important;
+	color: var(--intuition-text-color, var(--text-normal)) !important;
+	text-align: var(--intuition-text-align, center) !important;
+	overflow: visible !important;
+	height: auto !important;
+	max-height: none !important;
+}
+
+.canvas-node.intuition-plain-text .markdown-preview-view p,
+.canvas-node.intuition-plain-text .markdown-preview-view div,
+.canvas-node.intuition-plain-text .markdown-preview-view li,
+.canvas-node.intuition-plain-text .markdown-preview-view span,
+.canvas-node.intuition-plain-text .cm-line,
+.canvas-node.intuition-plain-text .cm-content,
+.canvas-node.intuition-plain-text .markdown-preview-sizer,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view p,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view div,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view li,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view span,
+.canvas-node[data-intuition-plain="1"] .cm-line,
+.canvas-node[data-intuition-plain="1"] .cm-content,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-sizer {
+	font-size: var(--intuition-font-size, inherit) !important;
+	line-height: calc(var(--intuition-line-height, 1.35) * 1em) !important;
+	height: auto !important;
+	min-height: 0 !important;
+	max-height: none !important;
+	overflow: visible !important;
+	clip: auto !important;
+	clip-path: none !important;
+}
+
+/* Beat themes that set rem/px line-height on preview body */
+.workspace-leaf-content[data-type="canvas"] .canvas-node[data-intuition-plain="1"] .markdown-preview-view,
+.workspace-leaf-content[data-type="canvas"] .canvas-node[data-intuition-plain="1"] .markdown-preview-view p,
+.workspace-leaf-content[data-type="canvas"] .canvas-node[data-intuition-plain="1"] .cm-line,
+.workspace-leaf-content[data-type="canvas"] .canvas-node[data-intuition-plain="1"] .cm-content {
+	font-size: var(--intuition-font-size) !important;
+	line-height: calc(var(--intuition-line-height, 1.35) * 1em) !important;
+	overflow: visible !important;
+}
+
+/* Vertical alignment uses JS margin — keep content box full height */
+.canvas-node[data-intuition-vertical-align] .canvas-node-container,
+.canvas-node.intuition-v-top .canvas-node-container,
+.canvas-node.intuition-v-middle .canvas-node-container,
+.canvas-node.intuition-v-bottom .canvas-node-container {
+	height: 100% !important;
+	box-sizing: border-box !important;
+	position: relative !important;
+	overflow: visible !important;
+}
+
+.canvas-node[data-intuition-vertical-align] .canvas-node-content,
+.canvas-node.intuition-v-top .canvas-node-content,
+.canvas-node.intuition-v-middle .canvas-node-content,
+.canvas-node.intuition-v-bottom .canvas-node-content {
+	height: 100% !important;
+	box-sizing: border-box !important;
+	position: relative !important;
+	overflow: visible !important;
+}
+
+.canvas-node[data-intuition-vertical-align] .markdown-preview-view,
+.canvas-node[data-intuition-vertical-align] .markdown-preview-sizer,
+.canvas-node[data-intuition-vertical-align] .markdown-source-view {
+	height: auto !important;
+	min-height: 0 !important;
+	overflow: visible !important;
+}
+
+/* Inherit color/family only */
+.canvas-node.intuition-plain-text .markdown-preview-view *,
+.canvas-node.intuition-plain-text .cm-content *,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view *,
+.canvas-node[data-intuition-plain="1"] .cm-content * {
+	font-family: inherit !important;
+	color: inherit !important;
+	text-align: inherit !important;
+	background: transparent !important;
+}
+
+.canvas-node.intuition-plain-text .markdown-preview-view h1,
+.canvas-node.intuition-plain-text .markdown-preview-view h2,
+.canvas-node.intuition-plain-text .markdown-preview-view h3,
+.canvas-node.intuition-plain-text .markdown-preview-view h4,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view h1,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view h2,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view h3,
+.canvas-node[data-intuition-plain="1"] .markdown-preview-view h4 {
+	border: none !important;
+	margin: 0.35em 0 !important;
+	padding: 0 !important;
+	font-size: inherit !important;
+	line-height: calc(var(--intuition-line-height, 1.35) * 1em) !important;
+	overflow: visible !important;
+	height: auto !important;
+}
+
+/* ── Style panels (bottom-right) ──────────────────────────────────── */
+
+.view-content {
+	position: relative;
+}
+
+.intuition-text-panel,
+.intuition-image-panel {
+	position: absolute;
+	right: 16px;
+	bottom: 16px;
+	z-index: 50;
+	width: min(280px, calc(100% - 32px));
+	padding: 12px 14px 14px;
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+	border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
+	backdrop-filter: blur(10px);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+	color: var(--text-normal);
+	font-size: 12px;
+}
+
+.intuition-text-panel__header,
+.intuition-panel__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 10px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+
+.intuition-text-panel__body,
+.intuition-panel__body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.intuition-panel__collage {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-top: 8px;
+	border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
+}
+
+.intuition-panel__collage-fixed {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.intuition-panel__size--number {
+	grid-template-columns: 1fr 64px;
+}
+
+.intuition-panel__number {
+	width: 100%;
+	min-width: 0;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	font-size: 12px;
+}
+
+.intuition-text-panel__row,
+.intuition-panel__row {
+	display: grid;
+	grid-template-columns: 96px 1fr;
+	align-items: center;
+	gap: 8px;
+}
+
+.intuition-text-panel__row--full,
+.intuition-panel__row--full {
+	display: block;
+}
+
+.intuition-text-panel__label,
+.intuition-panel__label {
+	color: var(--text-muted);
+	font-size: 11px;
+}
+
+.intuition-text-panel__select,
+.intuition-text-panel__color,
+.intuition-text-panel__size input[type="range"],
+.intuition-text-panel__row input[type="range"],
+.intuition-panel__select,
+.intuition-panel__color,
+.intuition-panel__size input[type="range"],
+.intuition-panel__row input[type="range"] {
+	width: 100%;
+}
+
+.intuition-text-panel__color,
+.intuition-panel__color {
+	height: 28px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+}
+
+.intuition-text-panel__size,
+.intuition-panel__size {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	gap: 8px;
+}
+
+.intuition-text-panel__value,
+.intuition-panel__value {
+	min-width: 36px;
+	text-align: right;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.intuition-text-panel__align {
+	display: flex;
+	gap: 2px;
+}
+
+.intuition-text-panel__align-btn.is-active {
+	color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+}
+
+.intuition-text-panel__toggle {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	cursor: pointer;
+	justify-self: start;
+}
+
+.intuition-text-panel__toggle input {
+	position: absolute;
+	opacity: 0;
+	width: 0;
+	height: 0;
+}
+
+.intuition-text-panel__toggle-ui {
+	width: 36px;
+	height: 20px;
+	border-radius: 999px;
+	background: var(--background-modifier-border);
+	position: relative;
+	transition: background 120ms ease;
+}
+
+.intuition-text-panel__toggle-ui::after {
+	content: "";
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--text-on-accent, #fff);
+	transition: transform 120ms ease;
+}
+
+.intuition-text-panel__toggle input:checked + .intuition-text-panel__toggle-ui {
+	background: var(--interactive-accent);
+}
+
+.intuition-text-panel__toggle input:checked + .intuition-text-panel__toggle-ui::after {
+	transform: translateX(16px);
+}
+
+.intuition-text-panel__row.is-disabled,
+.intuition-panel__row.is-disabled {
+	opacity: 0.4;
+	pointer-events: none;
+}
+
+/* Text card chrome when not plain */
+.canvas-node[data-intuition-card="1"] .canvas-node-container {
+	background: var(--intuition-card-bg, rgba(30, 31, 36, 0.85)) !important;
+	border-width: var(--intuition-card-border-width, 1px) !important;
+	border-style: solid !important;
+	border-color: var(--intuition-card-border-color, #d6d9db) !important;
+	box-shadow: none !important;
+	box-sizing: border-box !important;
+}
+
+.canvas-node[data-intuition-card="1"] .canvas-node-content {
+	background: transparent !important;
+}
+
+
+.intuition-text-panel__reset,
+.intuition-panel__reset {
+	width: 100%;
+	margin-top: 4px;
+	padding: 8px 12px;
+	font-size: 12px;
+	line-height: 1.3;
+	white-space: normal;
+	text-align: center;
+}
+
+.intuition-panel__actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 2px;
+}
+
+.intuition-panel__action {
+	flex: 1;
+	font-size: 12px;
+}
+
+.intuition-panel__action.is-disabled,
+.intuition-panel__action:disabled {
+	opacity: 0.45;
+}
+
+/* Image opacity + border (border painted via JS to match Obsidian hairline) */
+.canvas-node[data-intuition-image="1"] img,
+.canvas-node[data-intuition-image="1"] .media-embed,
+.canvas-node[data-intuition-image="1"] .image-embed {
+	opacity: var(--intuition-image-opacity, 1) !important;
+}
+
+.canvas-node[data-intuition-image="1"] .canvas-node-container,
+.canvas-node[data-intuition-image="1"] .canvas-node-content,
+.canvas-node[data-intuition-image="1"] img,
+.canvas-node[data-intuition-image="1"] .media-embed,
+.canvas-node[data-intuition-image="1"] .image-embed {
+	border-radius: var(--intuition-image-border-radius, 12px) !important;
+	overflow: hidden !important;
+	box-sizing: border-box !important;
+}
+
+/* Fully transparent image: strip Obsidian/theme card outline */
+.canvas-node[data-intuition-invisible="1"] .canvas-node-container,
+.canvas-node[data-intuition-invisible="1"] .canvas-node-content,
+.canvas-node[data-intuition-invisible="1"] .media-embed,
+.canvas-node[data-intuition-invisible="1"] .image-embed,
+.canvas-node[data-intuition-invisible="1"] img {
+	border: none !important;
+	border-width: 0 !important;
+	box-shadow: none !important;
+	outline: none !important;
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+/* Keep a soft selection cue so the node stays findable */
+.canvas-node[data-intuition-invisible="1"].is-selected .canvas-node-container,
+.canvas-node[data-intuition-invisible="1"].is-focused .canvas-node-container {
+	outline: 1px dashed color-mix(in srgb, var(--interactive-accent) 40%, transparent) !important;
+	outline-offset: 4px;
+	box-shadow: none !important;
+	border: none !important;
+}
+
+/* Soft aura glow behind image cards (DOM layer under .canvas-node-container) */
+.canvas-node[data-intuition-aura="1"] {
+	overflow: visible !important;
+}
+
+.canvas-node[data-intuition-aura="1"] .canvas-node-container {
+	position: relative;
+	z-index: 1;
+}
+
+.intuition-image-aura {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	/* Base = node box; --intuition-aura-size scales it (e.g. 100 → 1x) */
+	width: 100%;
+	height: 100%;
+	transform: translate(-50%, -50%)
+		scale(calc(var(--intuition-aura-size, 100) / 100));
+	pointer-events: none;
+	z-index: 0;
+	border-radius: 40%;
+	overflow: visible;
+	opacity: var(--intuition-aura-strength, 0.5);
+	animation: intuition-aura-breathe var(--intuition-aura-duration, 5.5s) ease-in-out
+		infinite;
+	animation-delay: var(--intuition-aura-delay, 0s);
+	contain: layout style;
+}
+
+/* v1: single soft glow when shimmer is off */
+.canvas-node[data-intuition-aura-shimmer="0"] .intuition-image-aura {
+	background:
+		radial-gradient(
+			ellipse 70% 60% at 35% 40%,
+			rgba(
+				var(--intuition-aura-rgb, 122, 107, 181),
+				calc(0.72 * var(--intuition-aura-strength, 0.5))
+			)
+				0%,
+			transparent 70%
+		),
+		radial-gradient(
+			ellipse 65% 55% at 70% 65%,
+			rgba(
+				var(--intuition-aura-rgb, 122, 107, 181),
+				calc(0.55 * var(--intuition-aura-strength, 0.5))
+			)
+				0%,
+			transparent 72%
+		),
+		radial-gradient(
+			circle at 50% 50%,
+			rgba(
+				var(--intuition-aura-rgb, 122, 107, 181),
+				calc(0.4 * var(--intuition-aura-strength, 0.5))
+			)
+				0%,
+			transparent 68%
+		);
+	filter: blur(18px) saturate(1.35);
+}
+
+/* v2: drifting color blobs — no mix-blend (expensive with many layers) */
+.intuition-image-aura__blob {
+	position: absolute;
+	border-radius: 50%;
+	pointer-events: none;
+	filter: blur(20px) saturate(1.35);
+}
+
+.intuition-image-aura__blob--a {
+	width: 72%;
+	height: 68%;
+	left: 4%;
+	top: 8%;
+	background: radial-gradient(
+		circle at 50% 50%,
+		rgba(var(--intuition-aura-rgb-a, 122, 107, 181), 0.85) 0%,
+		transparent 70%
+	);
+	animation: intuition-aura-drift-a var(--intuition-aura-drift-a, 8s) ease-in-out
+		infinite;
+	animation-delay: var(--intuition-aura-delay-a, 0s);
+}
+
+.intuition-image-aura__blob--b {
+	width: 64%;
+	height: 70%;
+	right: 0;
+	bottom: 0;
+	left: auto;
+	top: auto;
+	background: radial-gradient(
+		circle at 50% 50%,
+		rgba(var(--intuition-aura-rgb-b, 160, 120, 200), 0.75) 0%,
+		transparent 72%
+	);
+	animation: intuition-aura-drift-b var(--intuition-aura-drift-b, 10s) ease-in-out
+		infinite;
+	animation-delay: var(--intuition-aura-delay-b, 0s);
+}
+
+.intuition-image-aura__blob--c {
+	width: 58%;
+	height: 58%;
+	left: 28%;
+	top: 30%;
+	background: radial-gradient(
+		circle at 50% 50%,
+		rgba(var(--intuition-aura-rgb-c, 100, 140, 220), 0.7) 0%,
+		transparent 68%
+	);
+	animation: intuition-aura-drift-c var(--intuition-aura-drift-c, 7s) ease-in-out
+		infinite;
+	animation-delay: var(--intuition-aura-delay-c, 0s);
+}
+
+@keyframes intuition-aura-breathe {
+	0%,
+	100% {
+		transform: translate(-50%, -50%)
+			scale(calc(var(--intuition-aura-size, 100) / 100));
+		opacity: calc(var(--intuition-aura-strength, 0.5) * 0.9);
+	}
+	50% {
+		transform: translate(-50%, -50%)
+			scale(calc(var(--intuition-aura-size, 100) / 100 * 1.06));
+		opacity: calc(var(--intuition-aura-strength, 0.5) * 1.08);
+	}
+}
+
+@keyframes intuition-aura-drift-a {
+	0%,
+	100% {
+		transform: translate(0, 0) scale(1);
+		opacity: 0.85;
+	}
+	33% {
+		transform: translate(12%, -10%) scale(1.12);
+		opacity: 1;
+	}
+	66% {
+		transform: translate(-8%, 14%) scale(0.92);
+		opacity: 0.7;
+	}
+}
+
+@keyframes intuition-aura-drift-b {
+	0%,
+	100% {
+		transform: translate(0, 0) scale(1);
+		opacity: 0.8;
+	}
+	40% {
+		transform: translate(-14%, -8%) scale(1.1);
+		opacity: 1;
+	}
+	70% {
+		transform: translate(10%, 12%) scale(0.9);
+		opacity: 0.65;
+	}
+}
+
+@keyframes intuition-aura-drift-c {
+	0%,
+	100% {
+		transform: translate(0, 0) scale(1) rotate(0deg);
+		opacity: 0.75;
+	}
+	50% {
+		transform: translate(8%, -12%) scale(1.18) rotate(8deg);
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.intuition-image-aura,
+	.intuition-image-aura__blob {
+		animation: none !important;
+	}
+}
+
+.canvas-card-menu-button[data-intuition-canvas-add-text] {
+	color: var(--text-muted);
+}
+
+.canvas-card-menu-button[data-intuition-canvas-add-text]:hover {
+	color: var(--text-normal);
+}
+
+.canvas-card-menu-button[data-intuition-canvas-add-text]:hover {
+	color: var(--text-normal);
+}
