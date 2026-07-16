@@ -9,6 +9,8 @@ export interface PresentationSettings {
 	fadeMs: number;
 	/** 0 = off, 100 = full Ken Burns (~14% zoom). */
 	kenBurnsStrength: number;
+	/** Shuffle slides order on start. */
+	shuffle: boolean;
 	auras: boolean;
 	sparkles: boolean;
 	transition: PresentationTransition;
@@ -28,6 +30,7 @@ export const DEFAULT_PRESENTATION_SETTINGS: PresentationSettings = {
 	intervalSec: 7,
 	fadeMs: 1200,
 	kenBurnsStrength: 100,
+	shuffle: false,
 	auras: true,
 	sparkles: true,
 	transition: "dissolve",
@@ -71,6 +74,7 @@ export function normalizePresentationSettings(
 		intervalSec,
 		fadeMs,
 		kenBurnsStrength,
+		shuffle: p.shuffle ?? DEFAULT_PRESENTATION_SETTINGS.shuffle,
 		auras: p.auras ?? DEFAULT_PRESENTATION_SETTINGS.auras,
 		sparkles: p.sparkles ?? DEFAULT_PRESENTATION_SETTINGS.sparkles,
 		transition: normalizePresentationTransition(p.transition),

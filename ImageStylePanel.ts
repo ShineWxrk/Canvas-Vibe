@@ -87,6 +87,7 @@ export class ImageStylePanel {
 	private presentInputs: {
 		interval: HTMLInputElement;
 		intervalValue: HTMLElement;
+		shuffle: HTMLInputElement;
 		fade: HTMLInputElement;
 		fadeValue: HTMLElement;
 		kenBurns: HTMLInputElement;
@@ -546,6 +547,23 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
+		// ── Шаффл ──
+		const presentShuffleRow = presentTimingAcc.body.createDiv({
+			cls: "intuition-panel__row",
+		});
+		presentShuffleRow.createSpan({
+			text: "Шаффл",
+			cls: "intuition-panel__label",
+		});
+		const presentShuffleLabel = presentShuffleRow.createEl("label", {
+			cls: "intuition-text-panel__toggle",
+		});
+		const presentShuffle = presentShuffleLabel.createEl("input", {
+			type: "checkbox",
+			attr: { "aria-label": "Случайный порядок слайдов" },
+		});
+		presentShuffleLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
+
 		// ── Переходы ──
 		const presentTransitionsAcc = this.createAccordion(
 			this.presentSection,
@@ -630,6 +648,7 @@ export class ImageStylePanel {
 		this.presentInputs = {
 			interval: presentInterval,
 			intervalValue: presentIntervalValue,
+			shuffle: presentShuffle,
 			fade: presentFade,
 			fadeValue: presentFadeValue,
 			kenBurns: presentKenBurns,
@@ -652,6 +671,9 @@ export class ImageStylePanel {
 			presentIntervalValue.setText(`${value}с`);
 			this.commitPresentation({ intervalSec: value });
 		});
+		presentShuffle.addEventListener("change", () =>
+			this.commitPresentation({ shuffle: presentShuffle.checked }),
+		);
 		presentFade.addEventListener("input", () => {
 			const value = Number(presentFade.value);
 			presentFadeValue.setText(`${value}мс`);
@@ -938,6 +960,7 @@ export class ImageStylePanel {
 		const i = this.presentInputs;
 		i.interval.value = String(cfg.intervalSec);
 		i.intervalValue.setText(`${cfg.intervalSec}с`);
+		i.shuffle.checked = cfg.shuffle;
 		i.fade.value = String(cfg.fadeMs);
 		i.fadeValue.setText(`${cfg.fadeMs}мс`);
 		i.kenBurns.value = String(cfg.kenBurnsStrength);

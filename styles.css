@@ -35,6 +35,11 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	height: 100% !important;
 }
 
+.intuition-canvas-far-zoom .intuition-sticky-audio .intuition-image-aura {
+	width: 118% !important;
+	height: 160% !important;
+}
+
 .intuition-canvas-far-zoom .intuition-image-aura__blob {
 	animation: none !important;
 	filter: none !important;
@@ -232,6 +237,140 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 
 .intuition-collage-panel[hidden] {
 	display: none !important;
+}
+
+/* Sticky audio bar — above canvas controls, fixed to the leaf (not the board). */
+.intuition-sticky-audio {
+	position: absolute;
+	left: 50%;
+	bottom: 96px;
+	z-index: 115;
+	width: min(540px, calc(100% - 40px));
+	transform: translateX(-50%);
+	pointer-events: none;
+	overflow: visible;
+}
+
+.intuition-sticky-audio[hidden] {
+	display: none !important;
+}
+
+.intuition-sticky-audio__shell {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 10px;
+	border-radius: 14px;
+	background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+	border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
+	backdrop-filter: blur(10px);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+	color: var(--text-normal);
+	pointer-events: auto;
+}
+
+.intuition-sticky-audio .intuition-image-aura {
+	z-index: 0;
+	border-radius: 28%;
+	/* Slightly taller glow under a wide bar */
+	width: 118%;
+	height: 160%;
+	filter: none;
+}
+
+/* Keep player aura even if canvas auras are toggled off. */
+body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
+.workspace-leaf-content[data-type="canvas"].intuition-canvas-hide-auras
+	.intuition-sticky-audio
+	.intuition-image-aura,
+.canvas.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura {
+	display: block !important;
+	visibility: visible !important;
+	opacity: var(--intuition-aura-strength, 0.5) !important;
+}
+
+.intuition-sticky-audio__play,
+.intuition-sticky-audio__close,
+.intuition-sticky-audio__vol-icon,
+.intuition-sticky-audio__repeat {
+	flex: 0 0 auto;
+}
+
+.intuition-sticky-audio__repeat.is-active {
+	color: var(--interactive-accent);
+}
+
+.intuition-sticky-audio__meta {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.intuition-sticky-audio__title {
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.2;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.intuition-sticky-audio__seek-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.intuition-sticky-audio__seek {
+	flex: 1 1 auto;
+	min-width: 140px;
+	margin: 0;
+}
+
+.intuition-sticky-audio__time {
+	flex: 0 0 auto;
+	min-width: 7.5ch;
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	white-space: nowrap;
+	text-align: right;
+}
+
+.intuition-sticky-audio__volume {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-width: 0;
+}
+
+.intuition-sticky-audio__vol {
+	width: 42px;
+	margin: 0;
+}
+
+.intuition-sticky-audio__vol-value {
+	flex: 0 0 28px;
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	text-align: right;
+}
+
+.intuition-sticky-audio audio {
+	display: none;
+}
+
+/* Inside slideshow fullscreen: sit above photos, stay interactive. */
+.intuition-photo-presentation .intuition-sticky-audio,
+.intuition-sticky-audio--in-presentation {
+	z-index: 10050;
+	bottom: 28px;
 }
 
 .intuition-collage-panel__title {
@@ -1185,9 +1324,9 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 }
 
 .intuition-photo-presentation {
-	position: absolute;
+	position: fixed;
 	inset: 0;
-	z-index: 80;
+	z-index: 9999;
 	display: grid;
 	place-items: stretch;
 	background: #0a0a0b;

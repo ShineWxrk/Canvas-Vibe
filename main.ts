@@ -42,6 +42,7 @@ import {
 	type VibeSparkleConfig,
 } from "./vibeSparkles";
 import { FpsOverlay } from "./fpsOverlay";
+import { StickyAudioPlayer } from "./stickyAudioPlayer";
 import { PhotoPresentation, type PresentationSlide } from "./photoPresentation";
 import {
 	DEFAULT_PRESENTATION_SETTINGS,
@@ -150,6 +151,10 @@ interface IntuitionCanvasSettings {
 	collageCount: number;
 	/** Slideshow / presentation preferences (interval, fade, Ken Burns, FX, transition). */
 	presentation: PresentationSettings;
+	/** Sticky mini-player volume 0–100 */
+	stickyAudioVolume: number;
+	/** Sticky mini-player loop one track */
+	stickyAudioLoop: boolean;
 }
 
 const DEFAULT_SETTINGS: IntuitionCanvasSettings = {
@@ -172,6 +177,8 @@ const DEFAULT_SETTINGS: IntuitionCanvasSettings = {
 	collagePackAxis: "cols",
 	collageCount: COLLAGE_COUNT_DEFAULT,
 	presentation: { ...DEFAULT_PRESENTATION_SETTINGS },
+	stickyAudioVolume: 80,
+	stickyAudioLoop: false,
 };
 
 const VIBE_STRENGTH_SCALE = 2;
@@ -242,6 +249,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	private collagePanels = new Map<string, HTMLElement>();
 	private canvasPanels = new Map<string, CanvasStylePanel>();
 	private fpsOverlays = new Map<string, FpsOverlay>();
+	private stickyAudioPlayers = new Map<string, StickyAudioPlayer>();
 	private photoPresentations = new Map<string, PhotoPresentation>();
 	private vibeStrengthSaveTimer = 0;
 	private chromeSaveTimer = 0;
@@ -392,6 +400,8 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		this.canvasPanels.clear();
 		for (const fps of this.fpsOverlays.values()) fps.destroy();
 		this.fpsOverlays.clear();
+		for (const player of this.stickyAudioPlayers.values()) player.destroy();
+		this.stickyAudioPlayers.clear();
 		for (const present of this.photoPresentations.values()) present.destroy();
 		this.photoPresentations.clear();
 		if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
@@ -428,6 +438,9 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			.forEach((el) => el.remove());
 		document
 			.querySelectorAll("[data-intuition-photo-presentation]")
+			.forEach((el) => el.remove());
+		document
+			.querySelectorAll("[data-intuition-sticky-audio]")
 			.forEach((el) => el.remove());
 		document.getElementById("intuition-canvas-label-style")?.remove();
 		document.body.classList.remove(HIDE_CLASS);
@@ -558,6 +571,20 @@ export default class IntuitionCanvasPlugin extends Plugin {
 				: normalizeSparkleConfig(mergedSparkles);
 		this.settings.globalAura = normalizeGlobalAura(raw?.globalAura);
 		this.settings.presentation = normalizePresentationSettings(raw?.presentation);
+		this.settings.stickyAudioVolume = Math.min(
+			100,
+			Math.max(
+				0,
+				Math.round(
+					Number(
+						raw?.stickyAudioVolume ?? DEFAULT_SETTINGS.stickyAudioVolume,
+					),
+				),
+			),
+		);
+		this.settings.stickyAudioLoop = !!(
+			raw?.stickyAudioLoop ?? DEFAULT_SETTINGS.stickyAudioLoop
+		);
 		this.settings.vibeTextStrength = this.clampVibeTextStrength(
 			raw?.vibeTextStrength ?? DEFAULT_SETTINGS.vibeTextStrength,
 		);
@@ -898,6 +925,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			this.ensureVibeStrengthPanel(leaf);
 			this.ensureVibeController(leaf);
 			this.ensureFpsOverlay(leaf);
+			this.ensureStickyAudioPlayer(leaf);
 			this.installZoomFxHook(leaf);
 		}
 		this.applyVibeMode();
@@ -1226,6 +1254,35 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		);
 		fps.setZoomProvider(() => this.readCanvasZoom(view));
 		fps.attach(host);
+	}
+
+	/** Sticky mini-player: keeps audio alive when the Canvas node leaves the viewport. */
+	private ensureStickyAudioPlayer(leaf: WorkspaceLeaf) {
+		const id = (leaf as WorkspaceLeaf & { id?: string }).id ?? String(leaf);
+		const view = leaf.view as CanvasViewLike;
+		const host =
+			view.containerEl.querySelector<HTMLElement>(".view-content") ??
+			view.containerEl;
+		const canvasRoot =
+			view.canvas?.wrapperEl ??
+			view.containerEl.querySelector<HTMLElement>(".canvas-wrapper") ??
+			view.containerEl;
+		let player = this.stickyAudioPlayers.get(id);
+		if (!player) {
+			player = new StickyAudioPlayer();
+			this.stickyAudioPlayers.set(id, player);
+		}
+		player.setVolume(this.settings.stickyAudioVolume);
+		player.setLoop(this.settings.stickyAudioLoop);
+		player.setOnVolumeChange((pct) => {
+			this.settings.stickyAudioVolume = pct;
+			void this.saveSettings();
+		});
+		player.setOnLoopChange((loop) => {
+			this.settings.stickyAudioLoop = loop;
+			void this.saveSettings();
+		});
+		player.attach(host, canvasRoot);
 	}
 
 	private ensureVibeController(leaf: WorkspaceLeaf) {

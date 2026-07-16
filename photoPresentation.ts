@@ -84,6 +84,12 @@ export class PhotoPresentation {
 	private kbClearTimer = 0;
 	private sparklesConfig: Partial<VibeSparkleConfig> | null = null;
 	private tiltStrength = 50;
+	/** True when we successfully entered native OS fullscreen for this run. */
+	private fullscreenActive = false;
+	private onFullscreenChange: (() => void) | null = null;
+	/** Sticky player reparented into fullscreen root for the duration of the show. */
+	private adoptedSticky: HTMLElement | null = null;
+	private stickyHome: HTMLElement | null = null;
 
 	isActive(): boolean {
 		return !this.closed && !!this.root;
@@ -104,6 +110,7 @@ export class PhotoPresentation {
 		this.usingA = true;
 
 		const cfg = normalizePresentationSettings(options.settings);
+		if (cfg.shuffle) this.shuffleSlidesInPlace(this.slides);
 		this.intervalMs = Math.round(cfg.intervalSec * 1000);
 		this.fadeMs = cfg.fadeMs;
 		this.kenBurnsStrength = cfg.kenBurnsStrength;
@@ -200,7 +207,7 @@ export class PhotoPresentation {
 
 		const hint = document.createElement("div");
 		hint.className = `${ROOT_CLS}__hint`;
-		hint.textContent = "← →  ·  Space  ·  Esc";
+		hint.textContent = "← →  ·  Space  ·  Esc (выход)";
 
 		const closeBtn = document.createElement("button");
 		closeBtn.type = "button";
@@ -231,6 +238,25 @@ export class PhotoPresentation {
 		this.root = root;
 		this.hostEl = host;
 		host.classList.add("intuition-photo-presentation-active");
+		this.adoptStickyPlayer(host, root);
+
+		this.onFullscreenChange = () => {
+			const fs =
+				document.fullscreenElement ??
+				(document as Document & { webkitFullscreenElement?: Element })
+					.webkitFullscreenElement;
+			// User left OS fullscreen (Esc / OS chrome) — close the show.
+			if (!fs && this.fullscreenActive && !this.closed) {
+				this.fullscreenActive = false;
+				this.stop();
+			}
+		};
+		document.addEventListener("fullscreenchange", this.onFullscreenChange);
+		document.addEventListener(
+			"webkitfullscreenchange",
+			this.onFullscreenChange,
+		);
+		void this.enterNativeFullscreen(root);
 
 		if (this.sparklesEnabled) {
 			this.sparkles = new VibeSparkleController();
@@ -306,6 +332,18 @@ export class PhotoPresentation {
 			window.removeEventListener("keydown", this.keyHandler, true);
 			this.keyHandler = null;
 		}
+		if (this.onFullscreenChange) {
+			document.removeEventListener(
+				"fullscreenchange",
+				this.onFullscreenChange,
+			);
+			document.removeEventListener(
+				"webkitfullscreenchange",
+				this.onFullscreenChange,
+			);
+			this.onFullscreenChange = null;
+		}
+		void this.exitNativeFullscreen();
 		if (this.motionA) removeAuraLayer(this.motionA);
 		if (this.motionB) removeAuraLayer(this.motionB);
 		this.sparkles?.destroy();
@@ -317,6 +355,8 @@ export class PhotoPresentation {
 		this.hostEl = null;
 		const wasOpen = !this.closed;
 		this.closed = true;
+		// Move sticky out before removing the fullscreen root.
+		this.restoreStickyPlayer();
 		this.root?.remove();
 		this.root = null;
 		this.layerA = null;
@@ -621,6 +661,80 @@ export class PhotoPresentation {
 			motion.style.animationName = "";
 			motion.style.transform = "";
 			motion.style.removeProperty("--intuition-kb-amp");
+		}
+	}
+
+	private shuffleSlidesInPlace(list: PresentationSlide[]) {
+		// Fisher–Yates shuffle (random order per start call).
+		for (let i = list.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[list[i], list[j]] = [list[j], list[i]];
+		}
+	}
+
+	/** Keep sticky audio visible inside OS fullscreen (only descendants of the FS element show). */
+	private adoptStickyPlayer(host: HTMLElement, root: HTMLElement) {
+		const sticky = host.querySelector<HTMLElement>(
+			"[data-intuition-sticky-audio]",
+		);
+		if (!sticky || sticky.parentElement === root) return;
+		this.stickyHome = sticky.parentElement;
+		this.adoptedSticky = sticky;
+		sticky.classList.add("intuition-sticky-audio--in-presentation");
+		root.appendChild(sticky);
+	}
+
+	private restoreStickyPlayer() {
+		const sticky = this.adoptedSticky;
+		const home = this.stickyHome;
+		if (sticky) {
+			sticky.classList.remove("intuition-sticky-audio--in-presentation");
+			if (home?.isConnected) home.appendChild(sticky);
+		}
+		this.adoptedSticky = null;
+		this.stickyHome = null;
+	}
+
+	/** Hide OS taskbar + Obsidian chrome via native Fullscreen API. */
+	private async enterNativeFullscreen(el: HTMLElement) {
+		const anyEl = el as HTMLElement & {
+			requestFullscreen?: () => Promise<void>;
+			webkitRequestFullscreen?: () => void;
+		};
+		try {
+			if (typeof anyEl.requestFullscreen === "function") {
+				await anyEl.requestFullscreen();
+				this.fullscreenActive = true;
+				return;
+			}
+			if (typeof anyEl.webkitRequestFullscreen === "function") {
+				anyEl.webkitRequestFullscreen();
+				this.fullscreenActive = true;
+			}
+		} catch {
+			/* Denied / no user gesture — keep CSS fixed overlay fallback. */
+			this.fullscreenActive = false;
+		}
+	}
+
+	private async exitNativeFullscreen() {
+		if (!this.fullscreenActive) return;
+		this.fullscreenActive = false;
+		const doc = document as Document & {
+			exitFullscreen?: () => Promise<void>;
+			webkitExitFullscreen?: () => void;
+			webkitFullscreenElement?: Element;
+		};
+		const fs = document.fullscreenElement ?? doc.webkitFullscreenElement;
+		if (!fs) return;
+		try {
+			if (typeof doc.exitFullscreen === "function") {
+				await doc.exitFullscreen();
+			} else if (typeof doc.webkitExitFullscreen === "function") {
+				doc.webkitExitFullscreen();
+			}
+		} catch {
+			/* ignore */
 		}
 	}
 }

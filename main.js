@@ -26,7 +26,7 @@ __export(main_exports, {
   default: () => IntuitionCanvasPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // ImageStylePanel.ts
 var import_obsidian = require("obsidian");
@@ -987,6 +987,7 @@ var DEFAULT_PRESENTATION_SETTINGS = {
   intervalSec: 7,
   fadeMs: 1200,
   kenBurnsStrength: 100,
+  shuffle: false,
   auras: true,
   sparkles: true,
   transition: "dissolve",
@@ -1024,6 +1025,7 @@ function normalizePresentationSettings(partial) {
     intervalSec,
     fadeMs,
     kenBurnsStrength,
+    shuffle: p.shuffle ?? DEFAULT_PRESENTATION_SETTINGS.shuffle,
     auras: p.auras ?? DEFAULT_PRESENTATION_SETTINGS.auras,
     sparkles: p.sparkles ?? DEFAULT_PRESENTATION_SETTINGS.sparkles,
     transition: normalizePresentationTransition(p.transition),
@@ -1452,6 +1454,21 @@ var ImageStylePanel = class {
     const presentFadeValue = fadeWrap.createSpan({
       cls: "intuition-panel__value"
     });
+    const presentShuffleRow = presentTimingAcc.body.createDiv({
+      cls: "intuition-panel__row"
+    });
+    presentShuffleRow.createSpan({
+      text: "\u0428\u0430\u0444\u0444\u043B",
+      cls: "intuition-panel__label"
+    });
+    const presentShuffleLabel = presentShuffleRow.createEl("label", {
+      cls: "intuition-text-panel__toggle"
+    });
+    const presentShuffle = presentShuffleLabel.createEl("input", {
+      type: "checkbox",
+      attr: { "aria-label": "\u0421\u043B\u0443\u0447\u0430\u0439\u043D\u044B\u0439 \u043F\u043E\u0440\u044F\u0434\u043E\u043A \u0441\u043B\u0430\u0439\u0434\u043E\u0432" }
+    });
+    presentShuffleLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
     const presentTransitionsAcc = this.createAccordion(
       this.presentSection,
       "\u041F\u0435\u0440\u0435\u0445\u043E\u0434\u044B",
@@ -1528,6 +1545,7 @@ var ImageStylePanel = class {
     this.presentInputs = {
       interval: presentInterval,
       intervalValue: presentIntervalValue,
+      shuffle: presentShuffle,
       fade: presentFade,
       fadeValue: presentFadeValue,
       kenBurns: presentKenBurns,
@@ -1548,6 +1566,10 @@ var ImageStylePanel = class {
       presentIntervalValue.setText(`${value}\u0441`);
       this.commitPresentation({ intervalSec: value });
     });
+    presentShuffle.addEventListener(
+      "change",
+      () => this.commitPresentation({ shuffle: presentShuffle.checked })
+    );
     presentFade.addEventListener("input", () => {
       const value = Number(presentFade.value);
       presentFadeValue.setText(`${value}\u043C\u0441`);
@@ -1800,6 +1822,7 @@ var ImageStylePanel = class {
     const i = this.presentInputs;
     i.interval.value = String(cfg.intervalSec);
     i.intervalValue.setText(`${cfg.intervalSec}\u0441`);
+    i.shuffle.checked = cfg.shuffle;
     i.fade.value = String(cfg.fadeMs);
     i.fadeValue.setText(`${cfg.fadeMs}\u043C\u0441`);
     i.kenBurns.value = String(cfg.kenBurnsStrength);
@@ -3909,6 +3932,443 @@ var FpsOverlay = class {
   }
 };
 
+// stickyAudioPlayer.ts
+var import_obsidian4 = require("obsidian");
+var ATTR2 = "data-intuition-sticky-audio";
+var AUDIO_ATTR = "data-intuition-sticky-audio-el";
+var DEFAULT_VOLUME = 80;
+var AURA_COLOR = "#7a6bb5";
+var StickyAudioPlayer = class {
+  constructor() {
+    this.el = null;
+    this.shell = null;
+    this.audio = null;
+    this.titleEl = null;
+    this.timeEl = null;
+    this.playBtn = null;
+    this.seek = null;
+    this.volume = null;
+    this.volumeValue = null;
+    this.repeatBtn = null;
+    this.canvasRoot = null;
+    this.listenRoot = null;
+    this.seeking = false;
+    this.adopting = false;
+    this.volumePct = DEFAULT_VOLUME;
+    this.loop = false;
+    this.onVolumeChange = null;
+    this.onLoopChange = null;
+    this.onPlayCapture = null;
+    this.onTimeUpdate = null;
+    this.onEnded = null;
+    this.onPlay = null;
+    this.onPause = null;
+    this.volIconBtn = null;
+  }
+  setVolume(pct) {
+    this.volumePct = clampVolume(pct);
+    if (this.audio) this.audio.volume = this.volumePct / 100;
+    if (this.volume) this.volume.value = String(this.volumePct);
+    if (this.volumeValue) this.volumeValue.textContent = `${this.volumePct}%`;
+    this.syncVolumeIcon();
+  }
+  setOnVolumeChange(fn) {
+    this.onVolumeChange = fn;
+  }
+  setLoop(loop) {
+    this.loop = !!loop;
+    if (this.audio) this.audio.loop = this.loop;
+    this.syncRepeatUi();
+  }
+  setOnLoopChange(fn) {
+    this.onLoopChange = fn;
+  }
+  attach(host, canvasRoot) {
+    if (this.el?.isConnected && this.listenRoot === host) {
+      if (!this.el.isConnected) host.appendChild(this.el);
+      this.ensureAura();
+      return;
+    }
+    this.detachListeners();
+    if (this.el) removeAuraLayer(this.el);
+    this.el?.remove();
+    const el = document.createElement("div");
+    el.className = "intuition-sticky-audio";
+    el.setAttribute(ATTR2, "1");
+    el.hidden = true;
+    const shell = document.createElement("div");
+    shell.className = "intuition-sticky-audio__shell";
+    const playBtn = document.createElement("button");
+    playBtn.type = "button";
+    playBtn.className = "clickable-icon intuition-sticky-audio__play";
+    playBtn.setAttribute("aria-label", "\u041F\u0430\u0443\u0437\u0430");
+    (0, import_obsidian4.setIcon)(playBtn, "pause");
+    playBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.togglePlay();
+    });
+    const meta = document.createElement("div");
+    meta.className = "intuition-sticky-audio__meta";
+    const titleEl = document.createElement("div");
+    titleEl.className = "intuition-sticky-audio__title";
+    titleEl.textContent = "\u0410\u0443\u0434\u0438\u043E";
+    const seekRow = document.createElement("div");
+    seekRow.className = "intuition-sticky-audio__seek-row";
+    const seek = document.createElement("input");
+    seek.type = "range";
+    seek.className = "intuition-sticky-audio__seek";
+    seek.min = "0";
+    seek.max = "0";
+    seek.step = "0.1";
+    seek.value = "0";
+    seek.setAttribute("aria-label", "\u041F\u043E\u0437\u0438\u0446\u0438\u044F \u0442\u0440\u0435\u043A\u0430");
+    seek.addEventListener("pointerdown", (e) => e.stopPropagation());
+    seek.addEventListener("input", () => {
+      this.seeking = true;
+      const t = Number(seek.value);
+      const dur = Number(seek.max);
+      if (this.timeEl) {
+        this.timeEl.textContent = dur > 0 ? `${formatClock(t)} / ${formatClock(dur)}` : formatClock(t);
+      }
+    });
+    seek.addEventListener("change", () => {
+      const t = Number(seek.value);
+      if (this.audio && Number.isFinite(t)) this.audio.currentTime = t;
+      this.seeking = false;
+      this.syncProgress();
+    });
+    const timeEl = document.createElement("span");
+    timeEl.className = "intuition-sticky-audio__time";
+    timeEl.textContent = "0:00";
+    seekRow.appendChild(seek);
+    seekRow.appendChild(timeEl);
+    meta.appendChild(titleEl);
+    meta.appendChild(seekRow);
+    const volWrap = document.createElement("div");
+    volWrap.className = "intuition-sticky-audio__volume";
+    const volBtn = document.createElement("button");
+    volBtn.type = "button";
+    volBtn.className = "clickable-icon intuition-sticky-audio__vol-icon";
+    volBtn.setAttribute("aria-label", "\u0413\u0440\u043E\u043C\u043A\u043E\u0441\u0442\u044C");
+    (0, import_obsidian4.setIcon)(volBtn, "volume-2");
+    volBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.setVolume(this.volumePct > 0 ? 0 : DEFAULT_VOLUME);
+      this.onVolumeChange?.(this.volumePct);
+    });
+    const volume = document.createElement("input");
+    volume.type = "range";
+    volume.className = "intuition-sticky-audio__vol";
+    volume.min = "0";
+    volume.max = "100";
+    volume.step = "1";
+    volume.value = String(this.volumePct);
+    volume.setAttribute("aria-label", "\u0413\u0440\u043E\u043C\u043A\u043E\u0441\u0442\u044C");
+    volume.addEventListener("pointerdown", (e) => e.stopPropagation());
+    volume.addEventListener("input", () => {
+      this.setVolume(Number(volume.value));
+      this.onVolumeChange?.(this.volumePct);
+    });
+    const volumeValue = document.createElement("span");
+    volumeValue.className = "intuition-sticky-audio__vol-value";
+    volumeValue.textContent = `${this.volumePct}%`;
+    volWrap.appendChild(volBtn);
+    volWrap.appendChild(volume);
+    volWrap.appendChild(volumeValue);
+    const repeatBtn = document.createElement("button");
+    repeatBtn.type = "button";
+    repeatBtn.className = "clickable-icon intuition-sticky-audio__repeat";
+    repeatBtn.setAttribute("aria-label", "\u041F\u043E\u0432\u0442\u043E\u0440 \u0442\u0440\u0435\u043A\u0430");
+    repeatBtn.setAttribute("aria-pressed", "false");
+    (0, import_obsidian4.setIcon)(repeatBtn, "repeat");
+    repeatBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.setLoop(!this.loop);
+      this.onLoopChange?.(this.loop);
+    });
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "clickable-icon intuition-sticky-audio__close";
+    closeBtn.setAttribute("aria-label", "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u043F\u043B\u0435\u0435\u0440");
+    (0, import_obsidian4.setIcon)(closeBtn, "x");
+    closeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.stopAndHide();
+    });
+    const audio = document.createElement("audio");
+    audio.setAttribute(AUDIO_ATTR, "1");
+    audio.preload = "metadata";
+    audio.volume = this.volumePct / 100;
+    audio.loop = this.loop;
+    shell.appendChild(playBtn);
+    shell.appendChild(meta);
+    shell.appendChild(volWrap);
+    shell.appendChild(repeatBtn);
+    shell.appendChild(closeBtn);
+    shell.appendChild(audio);
+    el.appendChild(shell);
+    host.appendChild(el);
+    this.el = el;
+    this.shell = shell;
+    this.audio = audio;
+    this.titleEl = titleEl;
+    this.timeEl = timeEl;
+    this.playBtn = playBtn;
+    this.seek = seek;
+    this.volume = volume;
+    this.volumeValue = volumeValue;
+    this.repeatBtn = repeatBtn;
+    this.listenRoot = host;
+    this.canvasRoot = canvasRoot;
+    this.volIconBtn = volBtn;
+    this.onTimeUpdate = () => this.syncProgress();
+    this.onEnded = () => {
+      this.setPlayingUi(false);
+      this.syncProgress();
+    };
+    this.onPlay = () => {
+      this.setPlayingUi(true);
+      this.show();
+    };
+    this.onPause = () => this.setPlayingUi(false);
+    audio.addEventListener("timeupdate", this.onTimeUpdate);
+    audio.addEventListener("ended", this.onEnded);
+    audio.addEventListener("play", this.onPlay);
+    audio.addEventListener("pause", this.onPause);
+    audio.addEventListener("loadedmetadata", () => this.syncProgress());
+    this.onPlayCapture = (e) => this.handleCanvasPlay(e);
+    host.addEventListener("play", this.onPlayCapture, true);
+    this.ensureAura();
+    this.syncVolumeIcon();
+    this.syncRepeatUi();
+  }
+  /** True when the sticky player is audible / visible. */
+  isActive() {
+    return !!this.el && !this.el.hidden;
+  }
+  destroy() {
+    this.stopAndHide();
+    this.detachListeners();
+    if (this.el) removeAuraLayer(this.el);
+    this.el?.remove();
+    this.el = null;
+    this.shell = null;
+    this.audio = null;
+    this.titleEl = null;
+    this.timeEl = null;
+    this.playBtn = null;
+    this.seek = null;
+    this.volume = null;
+    this.volumeValue = null;
+    this.repeatBtn = null;
+    this.volIconBtn = null;
+    this.canvasRoot = null;
+    this.onVolumeChange = null;
+    this.onLoopChange = null;
+  }
+  detachListeners() {
+    if (this.listenRoot && this.onPlayCapture) {
+      this.listenRoot.removeEventListener("play", this.onPlayCapture, true);
+    }
+    this.onPlayCapture = null;
+    this.listenRoot = null;
+    if (this.audio) {
+      if (this.onTimeUpdate)
+        this.audio.removeEventListener("timeupdate", this.onTimeUpdate);
+      if (this.onEnded) this.audio.removeEventListener("ended", this.onEnded);
+      if (this.onPlay) this.audio.removeEventListener("play", this.onPlay);
+      if (this.onPause) this.audio.removeEventListener("pause", this.onPause);
+    }
+    this.onTimeUpdate = null;
+    this.onEnded = null;
+    this.onPlay = null;
+    this.onPause = null;
+  }
+  ensureAura() {
+    if (!this.el) return;
+    paintAuraLayer(this.el, {
+      color: AURA_COLOR,
+      palette: [AURA_COLOR, "#a078c8", "#648cd0"],
+      strength: 55,
+      size: 130,
+      shimmer: true,
+      seed: "sticky-audio"
+    });
+  }
+  handleCanvasPlay(e) {
+    const target = e.target;
+    if (!(target instanceof HTMLAudioElement)) return;
+    if (target === this.audio) return;
+    if (target.getAttribute(AUDIO_ATTR) === "1") return;
+    if (!target.closest(".canvas-node")) return;
+    if (this.adopting) return;
+    this.adopting = true;
+    try {
+      const src = target.currentSrc || target.src;
+      if (!src) return;
+      const time = Number.isFinite(target.currentTime) ? target.currentTime : 0;
+      const title = titleFromAudio(target);
+      try {
+        target.pause();
+      } catch {
+      }
+      void this.adopt(src, time, title);
+    } finally {
+      this.adopting = false;
+    }
+  }
+  async adopt(src, time, title) {
+    const audio = this.audio;
+    if (!audio) return;
+    if (this.titleEl) this.titleEl.textContent = title;
+    this.ensureAura();
+    this.show();
+    this.setPlayingUi(true);
+    audio.volume = this.volumePct / 100;
+    audio.loop = this.loop;
+    const same = !!audio.currentSrc && (audio.currentSrc === src || normalizeSrc(audio.currentSrc) === normalizeSrc(src) || normalizeSrc(audio.src) === normalizeSrc(src));
+    if (!same) {
+      audio.src = src;
+    }
+    const resume = async () => {
+      try {
+        if (Number.isFinite(time) && time > 0.05) {
+          audio.currentTime = time;
+        } else if (!same) {
+          audio.currentTime = 0;
+        } else {
+          audio.currentTime = 0;
+        }
+      } catch {
+      }
+      try {
+        await audio.play();
+      } catch {
+        this.setPlayingUi(false);
+      }
+      this.syncProgress();
+    };
+    if (!same && audio.readyState < 1) {
+      audio.addEventListener(
+        "loadedmetadata",
+        () => {
+          void resume();
+        },
+        { once: true }
+      );
+      void audio.play().catch(() => {
+      });
+      return;
+    }
+    await resume();
+  }
+  togglePlay() {
+    const audio = this.audio;
+    if (!audio) return;
+    if (audio.paused) void audio.play().catch(() => this.setPlayingUi(false));
+    else audio.pause();
+  }
+  stopAndHide() {
+    const audio = this.audio;
+    if (audio) {
+      try {
+        audio.pause();
+      } catch {
+      }
+      try {
+        audio.currentTime = 0;
+      } catch {
+      }
+    }
+    this.setPlayingUi(false);
+    this.hide();
+  }
+  show() {
+    if (this.el) this.el.hidden = false;
+    this.ensureAura();
+  }
+  hide() {
+    if (this.el) this.el.hidden = true;
+    if (this.seek) {
+      this.seek.value = "0";
+      this.seek.max = "0";
+    }
+    if (this.timeEl) this.timeEl.textContent = "0:00";
+  }
+  setPlayingUi(playing) {
+    if (!this.playBtn) return;
+    this.playBtn.setAttribute("aria-label", playing ? "\u041F\u0430\u0443\u0437\u0430" : "\u0418\u0433\u0440\u0430\u0442\u044C");
+    (0, import_obsidian4.setIcon)(this.playBtn, playing ? "pause" : "play");
+  }
+  syncVolumeIcon() {
+    if (!this.volIconBtn) return;
+    const icon = this.volumePct <= 0 ? "volume-x" : this.volumePct < 40 ? "volume-1" : "volume-2";
+    (0, import_obsidian4.setIcon)(this.volIconBtn, icon);
+  }
+  syncRepeatUi() {
+    if (!this.repeatBtn) return;
+    this.repeatBtn.classList.toggle("is-active", this.loop);
+    this.repeatBtn.setAttribute("aria-pressed", this.loop ? "true" : "false");
+    this.repeatBtn.setAttribute(
+      "aria-label",
+      this.loop ? "\u041F\u043E\u0432\u0442\u043E\u0440 \u0432\u043A\u043B\u044E\u0447\u0451\u043D" : "\u041F\u043E\u0432\u0442\u043E\u0440 \u0442\u0440\u0435\u043A\u0430"
+    );
+  }
+  syncProgress() {
+    const audio = this.audio;
+    const seek = this.seek;
+    if (!audio || !seek || this.seeking) return;
+    const dur = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const cur = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    if (dur > 0) {
+      seek.max = String(dur);
+      seek.value = String(cur);
+    }
+    if (this.timeEl) {
+      this.timeEl.textContent = dur > 0 ? `${formatClock(cur)} / ${formatClock(dur)}` : formatClock(cur);
+    }
+  }
+};
+function clampVolume(n) {
+  if (!Number.isFinite(n)) return DEFAULT_VOLUME;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+function titleFromAudio(el) {
+  const node = el.closest(".canvas-node");
+  const label = node?.querySelector(".canvas-node-label")?.textContent?.trim();
+  if (label) return label;
+  const src = el.currentSrc || el.src;
+  if (!src) return "\u0410\u0443\u0434\u0438\u043E";
+  try {
+    const leaf = decodeURIComponent(
+      src.split(/[/\\]/).pop()?.split("?")[0] ?? ""
+    );
+    return leaf || "\u0410\u0443\u0434\u0438\u043E";
+  } catch {
+    return "\u0410\u0443\u0434\u0438\u043E";
+  }
+}
+function normalizeSrc(src) {
+  try {
+    return decodeURIComponent(src.split("?")[0] ?? src);
+  } catch {
+    return src;
+  }
+}
+function formatClock(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return "0:00";
+  const s = Math.floor(sec % 60);
+  const m = Math.floor(sec / 60) % 60;
+  const h = Math.floor(sec / 3600);
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 // photoPresentation.ts
 var ROOT_CLS = "intuition-photo-presentation";
 var ROOT_ATTR = "data-intuition-photo-presentation";
@@ -3957,6 +4417,12 @@ var PhotoPresentation = class {
     this.kbClearTimer = 0;
     this.sparklesConfig = null;
     this.tiltStrength = 50;
+    /** True when we successfully entered native OS fullscreen for this run. */
+    this.fullscreenActive = false;
+    this.onFullscreenChange = null;
+    /** Sticky player reparented into fullscreen root for the duration of the show. */
+    this.adoptedSticky = null;
+    this.stickyHome = null;
   }
   isActive() {
     return !this.closed && !!this.root;
@@ -3970,6 +4436,7 @@ var PhotoPresentation = class {
     this.index = 0;
     this.usingA = true;
     const cfg = normalizePresentationSettings(options.settings);
+    if (cfg.shuffle) this.shuffleSlidesInPlace(this.slides);
     this.intervalMs = Math.round(cfg.intervalSec * 1e3);
     this.fadeMs = cfg.fadeMs;
     this.kenBurnsStrength = cfg.kenBurnsStrength;
@@ -4047,7 +4514,7 @@ var PhotoPresentation = class {
     this.metaEl = meta;
     const hint = document.createElement("div");
     hint.className = `${ROOT_CLS}__hint`;
-    hint.textContent = "\u2190 \u2192  \xB7  Space  \xB7  Esc";
+    hint.textContent = "\u2190 \u2192  \xB7  Space  \xB7  Esc (\u0432\u044B\u0445\u043E\u0434)";
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = `${ROOT_CLS}__close`;
@@ -4073,6 +4540,20 @@ var PhotoPresentation = class {
     this.root = root;
     this.hostEl = host;
     host.classList.add("intuition-photo-presentation-active");
+    this.adoptStickyPlayer(host, root);
+    this.onFullscreenChange = () => {
+      const fs = document.fullscreenElement ?? document.webkitFullscreenElement;
+      if (!fs && this.fullscreenActive && !this.closed) {
+        this.fullscreenActive = false;
+        this.stop();
+      }
+    };
+    document.addEventListener("fullscreenchange", this.onFullscreenChange);
+    document.addEventListener(
+      "webkitfullscreenchange",
+      this.onFullscreenChange
+    );
+    void this.enterNativeFullscreen(root);
     if (this.sparklesEnabled) {
       this.sparkles = new VibeSparkleController();
       this.sparkles.attach(root, {
@@ -4143,6 +4624,18 @@ var PhotoPresentation = class {
       window.removeEventListener("keydown", this.keyHandler, true);
       this.keyHandler = null;
     }
+    if (this.onFullscreenChange) {
+      document.removeEventListener(
+        "fullscreenchange",
+        this.onFullscreenChange
+      );
+      document.removeEventListener(
+        "webkitfullscreenchange",
+        this.onFullscreenChange
+      );
+      this.onFullscreenChange = null;
+    }
+    void this.exitNativeFullscreen();
     if (this.motionA) removeAuraLayer(this.motionA);
     if (this.motionB) removeAuraLayer(this.motionB);
     this.sparkles?.destroy();
@@ -4154,6 +4647,7 @@ var PhotoPresentation = class {
     this.hostEl = null;
     const wasOpen = !this.closed;
     this.closed = true;
+    this.restoreStickyPlayer();
     this.root?.remove();
     this.root = null;
     this.layerA = null;
@@ -4415,6 +4909,65 @@ var PhotoPresentation = class {
       motion.style.removeProperty("--intuition-kb-amp");
     }
   }
+  shuffleSlidesInPlace(list) {
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
+  }
+  /** Keep sticky audio visible inside OS fullscreen (only descendants of the FS element show). */
+  adoptStickyPlayer(host, root) {
+    const sticky = host.querySelector(
+      "[data-intuition-sticky-audio]"
+    );
+    if (!sticky || sticky.parentElement === root) return;
+    this.stickyHome = sticky.parentElement;
+    this.adoptedSticky = sticky;
+    sticky.classList.add("intuition-sticky-audio--in-presentation");
+    root.appendChild(sticky);
+  }
+  restoreStickyPlayer() {
+    const sticky = this.adoptedSticky;
+    const home = this.stickyHome;
+    if (sticky) {
+      sticky.classList.remove("intuition-sticky-audio--in-presentation");
+      if (home?.isConnected) home.appendChild(sticky);
+    }
+    this.adoptedSticky = null;
+    this.stickyHome = null;
+  }
+  /** Hide OS taskbar + Obsidian chrome via native Fullscreen API. */
+  async enterNativeFullscreen(el) {
+    const anyEl = el;
+    try {
+      if (typeof anyEl.requestFullscreen === "function") {
+        await anyEl.requestFullscreen();
+        this.fullscreenActive = true;
+        return;
+      }
+      if (typeof anyEl.webkitRequestFullscreen === "function") {
+        anyEl.webkitRequestFullscreen();
+        this.fullscreenActive = true;
+      }
+    } catch {
+      this.fullscreenActive = false;
+    }
+  }
+  async exitNativeFullscreen() {
+    if (!this.fullscreenActive) return;
+    this.fullscreenActive = false;
+    const doc = document;
+    const fs = document.fullscreenElement ?? doc.webkitFullscreenElement;
+    if (!fs) return;
+    try {
+      if (typeof doc.exitFullscreen === "function") {
+        await doc.exitFullscreen();
+      } else if (typeof doc.webkitExitFullscreen === "function") {
+        doc.webkitExitFullscreen();
+      }
+    } catch {
+    }
+  }
 };
 
 // main.ts
@@ -4469,11 +5022,13 @@ var DEFAULT_SETTINGS = {
   collageGap: 16,
   collagePackAxis: "cols",
   collageCount: COLLAGE_COUNT_DEFAULT,
-  presentation: { ...DEFAULT_PRESENTATION_SETTINGS }
+  presentation: { ...DEFAULT_PRESENTATION_SETTINGS },
+  stickyAudioVolume: 80,
+  stickyAudioLoop: false
 };
 var VIBE_STRENGTH_SCALE = 2;
 var VIBE_SPARKLE_SCALE = 3;
-var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
+var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -4487,6 +5042,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.collagePanels = /* @__PURE__ */ new Map();
     this.canvasPanels = /* @__PURE__ */ new Map();
     this.fpsOverlays = /* @__PURE__ */ new Map();
+    this.stickyAudioPlayers = /* @__PURE__ */ new Map();
     this.photoPresentations = /* @__PURE__ */ new Map();
     this.vibeStrengthSaveTimer = 0;
     this.chromeSaveTimer = 0;
@@ -4621,6 +5177,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.canvasPanels.clear();
     for (const fps of this.fpsOverlays.values()) fps.destroy();
     this.fpsOverlays.clear();
+    for (const player of this.stickyAudioPlayers.values()) player.destroy();
+    this.stickyAudioPlayers.clear();
     for (const present of this.photoPresentations.values()) present.destroy();
     this.photoPresentations.clear();
     if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
@@ -4644,6 +5202,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     document.querySelectorAll(`[${CHROME_BTN_ATTR}]`).forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-canvas-panel]").forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-photo-presentation]").forEach((el) => el.remove());
+    document.querySelectorAll("[data-intuition-sticky-audio]").forEach((el) => el.remove());
     document.getElementById("intuition-canvas-label-style")?.remove();
     document.body.classList.remove(HIDE_CLASS);
     document.body.classList.remove(HIDE_AURAS_CLASS);
@@ -4739,6 +5298,18 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.settings.vibeSparkles = prevSparkleScale < VIBE_SPARKLE_SCALE ? migrateLegacySparkleConfig(mergedSparkles) : normalizeSparkleConfig(mergedSparkles);
     this.settings.globalAura = normalizeGlobalAura(raw?.globalAura);
     this.settings.presentation = normalizePresentationSettings(raw?.presentation);
+    this.settings.stickyAudioVolume = Math.min(
+      100,
+      Math.max(
+        0,
+        Math.round(
+          Number(
+            raw?.stickyAudioVolume ?? DEFAULT_SETTINGS.stickyAudioVolume
+          )
+        )
+      )
+    );
+    this.settings.stickyAudioLoop = !!(raw?.stickyAudioLoop ?? DEFAULT_SETTINGS.stickyAudioLoop);
     this.settings.vibeTextStrength = this.clampVibeTextStrength(
       raw?.vibeTextStrength ?? DEFAULT_SETTINGS.vibeTextStrength
     );
@@ -4939,7 +5510,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     }
     this.syncVibeSparkleControls();
     this.queueVibeSettingsSave();
-    new import_obsidian4.Notice("\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
+    new import_obsidian5.Notice("\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
   }
   patchGlobalAura(partial, persist = true) {
     this.settings.globalAura = normalizeGlobalAura({
@@ -4958,7 +5529,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.syncGlobalAuraControls();
     this.applyGlobalAuraToAllImages(false);
     this.queueVibeSettingsSave();
-    new import_obsidian4.Notice("\u0410\u0443\u0440\u044B \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
+    new import_obsidian5.Notice("\u0410\u0443\u0440\u044B \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
   }
   /** Clear the global CSS hide so painted DOM auras can actually show. */
   clearHideAurasGate() {
@@ -4993,7 +5564,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     }
     this.refreshImageStyles();
     if (showNotice) {
-      new import_obsidian4.Notice(
+      new import_obsidian5.Notice(
         count > 0 ? `\u0410\u0443\u0440\u044B \u043F\u0440\u0438\u043C\u0435\u043D\u0435\u043D\u044B (${count})` : "\u041D\u0435\u0442 \u043A\u0430\u0440\u0442\u0438\u043D\u043E\u043A \u043D\u0430 \u043A\u0430\u043D\u0432\u0430\u0441\u0435",
         1400
       );
@@ -5010,7 +5581,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.settings.vibeMode = !this.settings.vibeMode;
     await this.saveSettings();
     this.applyVibeMode();
-    new import_obsidian4.Notice(
+    new import_obsidian5.Notice(
       this.settings.vibeMode ? "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D",
       1400
     );
@@ -5032,6 +5603,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       this.ensureVibeStrengthPanel(leaf);
       this.ensureVibeController(leaf);
       this.ensureFpsOverlay(leaf);
+      this.ensureStickyAudioPlayer(leaf);
       this.installZoomFxHook(leaf);
     }
     this.applyVibeMode();
@@ -5288,6 +5860,29 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     );
     fps.setZoomProvider(() => this.readCanvasZoom(view));
     fps.attach(host);
+  }
+  /** Sticky mini-player: keeps audio alive when the Canvas node leaves the viewport. */
+  ensureStickyAudioPlayer(leaf) {
+    const id = leaf.id ?? String(leaf);
+    const view = leaf.view;
+    const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
+    const canvasRoot = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
+    let player = this.stickyAudioPlayers.get(id);
+    if (!player) {
+      player = new StickyAudioPlayer();
+      this.stickyAudioPlayers.set(id, player);
+    }
+    player.setVolume(this.settings.stickyAudioVolume);
+    player.setLoop(this.settings.stickyAudioLoop);
+    player.setOnVolumeChange((pct) => {
+      this.settings.stickyAudioVolume = pct;
+      void this.saveSettings();
+    });
+    player.setOnLoopChange((loop) => {
+      this.settings.stickyAudioLoop = loop;
+      void this.saveSettings();
+    });
+    player.attach(host, canvasRoot);
   }
   ensureVibeController(leaf) {
     const id = leaf.id ?? String(leaf);
@@ -5597,7 +6192,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     head.setAttribute("aria-expanded", open ? "true" : "false");
     const chevron = document.createElement("span");
     chevron.className = "intuition-vibe-panel__accordion-chevron";
-    (0, import_obsidian4.setIcon)(chevron, "chevron-right");
+    (0, import_obsidian5.setIcon)(chevron, "chevron-right");
     const label = document.createElement("span");
     label.className = "intuition-vibe-panel__accordion-title";
     label.textContent = title;
@@ -6002,8 +6597,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     btn.className = "canvas-card-menu-button";
     btn.setAttribute(TEXT_BTN_ATTR, "1");
     btn.setAttribute("aria-label", "\u0422\u0435\u043A\u0441\u0442 \u0431\u0435\u0437 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438");
-    (0, import_obsidian4.setIcon)(btn, "type");
-    (0, import_obsidian4.setTooltip)(btn, "\u0422\u0435\u043A\u0441\u0442 \u0431\u0435\u0437 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438", { placement: "top" });
+    (0, import_obsidian5.setIcon)(btn, "type");
+    (0, import_obsidian5.setTooltip)(btn, "\u0422\u0435\u043A\u0441\u0442 \u0431\u0435\u0437 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438", { placement: "top" });
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -6233,8 +6828,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const open = !(this.collagePanels.get(id)?.hidden ?? true);
     const gap = clampCollageGap(this.settings.collageGap);
     button.classList.toggle("is-active", open);
-    (0, import_obsidian4.setIcon)(button, "layout-grid");
-    (0, import_obsidian4.setTooltip)(button, open ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" : "\u041A\u043E\u043B\u043B\u0430\u0436", {
+    (0, import_obsidian5.setIcon)(button, "layout-grid");
+    (0, import_obsidian5.setTooltip)(button, open ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" : "\u041A\u043E\u043B\u043B\u0430\u0436", {
       placement: "left"
     });
     button.setAttribute(
@@ -6287,7 +6882,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const view = leaf.view;
     const selected = this.getSelectedImageNodes(view);
     if (selected.length < 1) {
-      new import_obsidian4.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B \u043E\u0434\u043D\u0443 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1600);
+      new import_obsidian5.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B \u043E\u0434\u043D\u0443 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1600);
       return;
     }
     const ordered = sortNodesReadingOrder(
@@ -6302,7 +6897,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       slides.push({ src, label });
     }
     if (slides.length === 0) {
-      new import_obsidian4.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
+      new import_obsidian5.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
       return;
     }
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
@@ -6320,10 +6915,10 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       )
     });
     if (!ok) {
-      new import_obsidian4.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u043F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044E", 1600);
+      new import_obsidian5.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u043F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044E", 1600);
       return;
     }
-    new import_obsidian4.Notice(`\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F: ${slides.length} \u0444\u043E\u0442\u043E \xB7 Esc \u2014 \u0432\u044B\u0445\u043E\u0434`, 2200);
+    new import_obsidian5.Notice(`\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F: ${slides.length} \u0444\u043E\u0442\u043E \xB7 Esc \u2014 \u0432\u044B\u0445\u043E\u0434`, 2200);
   }
   resolveImageSlideSrc(node) {
     const img = node.nodeEl?.querySelector("img");
@@ -6332,7 +6927,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const path = node.file?.path ?? node.filePath ?? (typeof node.getData?.()?.file === "string" ? node.getData()?.file : void 0);
     if (!path) return fromDom || null;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian4.TFile) {
+    if (file instanceof import_obsidian5.TFile) {
       return this.app.vault.getResourcePath(file);
     }
     return fromDom || null;
@@ -6341,7 +6936,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
   arrangeSelectedImagesCollage(view) {
     const selected = this.getSelectedImageNodes(view);
     if (selected.length < 2) {
-      new import_obsidian4.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B 2 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438", 1600);
+      new import_obsidian5.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B 2 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438", 1600);
       return;
     }
     const gap = clampCollageGap(this.settings.collageGap);
@@ -6388,7 +6983,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     }
     view.canvas?.requestSave?.();
     const axisNote = axis === "rows" ? ` \xB7 ${count} \u0441\u0442\u0440.` : ` \xB7 ${count} \u0441\u0442\u043B\u0431.`;
-    new import_obsidian4.Notice(
+    new import_obsidian5.Notice(
       `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u043E\u0442\u0441\u0442\u0443\u043F\u044B ${gap}px${axisNote}`,
       1400
     );
@@ -6396,7 +6991,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
   addPlainTextNode(view) {
     const canvas = view.canvas;
     if (!canvas?.createTextNode) {
-      new import_obsidian4.Notice("Canvas API: createTextNode \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D");
+      new import_obsidian5.Notice("Canvas API: createTextNode \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D");
       return;
     }
     const center = canvas.posCenter?.() ?? { x: 0, y: 0 };
@@ -6409,7 +7004,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       focus: true
     });
     if (!node) {
-      new import_obsidian4.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442");
+      new import_obsidian5.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442");
       return;
     }
     writeTextStyle(node, { ...DEFAULT_TEXT_STYLE });
@@ -6419,7 +7014,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     if (leaf) {
       window.setTimeout(() => this.syncStylePanelsForLeaf(leaf), 50);
     }
-    new import_obsidian4.Notice("\u0422\u0435\u043A\u0441\u0442 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D", 1500);
+    new import_obsidian5.Notice("\u0422\u0435\u043A\u0441\u0442 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D", 1500);
   }
   injectToggle(leaf) {
     const view = leaf.view;
@@ -6501,8 +7096,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const button = document.createElement("button");
     button.className = "clickable-icon intuition-canvas-toggle intuition-canvas-chrome-toggle";
     button.type = "button";
-    (0, import_obsidian4.setIcon)(button, "palette");
-    (0, import_obsidian4.setTooltip)(button, "\u0424\u043E\u043D \u0438 \u0442\u043E\u0447\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430", { placement: "left" });
+    (0, import_obsidian5.setIcon)(button, "palette");
+    (0, import_obsidian5.setTooltip)(button, "\u0424\u043E\u043D \u0438 \u0442\u043E\u0447\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430", { placement: "left" });
     button.setAttribute("aria-label", "\u0424\u043E\u043D \u0438 \u0442\u043E\u0447\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430");
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -6532,8 +7127,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     if (!button) return;
     const hidden = this.settings.hideImageLabels;
     button.classList.toggle("is-active", hidden);
-    (0, import_obsidian4.setIcon)(button, hidden ? "eye-off" : "eye");
-    (0, import_obsidian4.setTooltip)(button, hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438" : "\u0421\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438", {
+    (0, import_obsidian5.setIcon)(button, hidden ? "eye-off" : "eye");
+    (0, import_obsidian5.setTooltip)(button, hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438" : "\u0421\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438", {
       placement: "left"
     });
     button.setAttribute(
@@ -6546,8 +7141,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     if (!button) return;
     const hidden = this.settings.hideAuras;
     button.classList.toggle("is-active", hidden);
-    (0, import_obsidian4.setIcon)(button, hidden ? "zap-off" : "sparkles");
-    (0, import_obsidian4.setTooltip)(button, hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0430\u0443\u0440\u044B" : "\u0421\u043A\u0440\u044B\u0442\u044C \u0430\u0443\u0440\u044B", {
+    (0, import_obsidian5.setIcon)(button, hidden ? "zap-off" : "sparkles");
+    (0, import_obsidian5.setTooltip)(button, hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0430\u0443\u0440\u044B" : "\u0421\u043A\u0440\u044B\u0442\u044C \u0430\u0443\u0440\u044B", {
       placement: "left"
     });
     button.setAttribute(
@@ -6560,8 +7155,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     if (!button) return;
     const on = this.settings.vibeMode;
     button.classList.toggle("is-active", on);
-    (0, import_obsidian4.setIcon)(button, "wand-2");
-    (0, import_obsidian4.setTooltip)(
+    (0, import_obsidian5.setIcon)(button, "wand-2");
+    (0, import_obsidian5.setTooltip)(
       button,
       on ? "\u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0432\u0430\u0439\u0431-\u043D\u0430\u043A\u043B\u043E\u043D" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u0443 \u043A\u0443\u0440\u0441\u043E\u0440\u0430",
       { placement: "left" }
