@@ -10,17 +10,15 @@ import {
 	writeImageStyle,
 } from "./imageStyles";
 import {
-	clampCollageFixedSize,
+	clampCollageCount,
 	clampCollageGap,
-	COLLAGE_FIXED_SIZE_MAX,
-	COLLAGE_FIXED_SIZE_MIN,
+	COLLAGE_COUNT_MAX,
+	COLLAGE_COUNT_MIN,
 	COLLAGE_GAP_MAX,
 	COLLAGE_GAP_SLIDER_MAX,
-	normalizeCollageFixedAxis,
-	normalizeCollageSizeMode,
+	normalizeCollagePackAxis,
 	restoreNaturalAspectPreservingArea,
-	type CollageFixedAxis,
-	type CollageSizeMode,
+	type CollagePackAxis,
 } from "./collageLayout";
 import {
 	copyImageFormat,
@@ -41,12 +39,10 @@ function toOpacity(transparency: number): number {
 export type ImageStylePanelCollageHooks = {
 	getGap: () => number;
 	onGapChange: (gap: number) => void;
-	getSizeMode: () => CollageSizeMode;
-	onSizeModeChange: (mode: CollageSizeMode) => void;
-	getFixedAxis: () => CollageFixedAxis;
-	onFixedAxisChange: (axis: CollageFixedAxis) => void;
-	getFixedSize: () => number;
-	onFixedSizeChange: (size: number) => void;
+	getPackAxis: () => CollagePackAxis;
+	onPackAxisChange: (axis: CollagePackAxis) => void;
+	getCount: () => number;
+	onCountChange: (count: number) => void;
 	onArrange: () => void;
 };
 
@@ -59,11 +55,10 @@ export class ImageStylePanel {
 	private collageSection: HTMLElement;
 	private collageGap: HTMLInputElement;
 	private collageGapPx: HTMLInputElement;
-	private collageMode: HTMLSelectElement;
-	private collageFixedBlock: HTMLElement;
 	private collageAxis: HTMLSelectElement;
-	private collageFixedSize: HTMLInputElement;
-	private collageFixedSizeSlider: HTMLInputElement;
+	private collageCountLabel: HTMLElement;
+	private collageCount: HTMLInputElement;
+	private collageCountSlider: HTMLInputElement;
 	private collageHooks: ImageStylePanelCollageHooks | null = null;
 	private inputs: {
 		transparency: HTMLInputElement;
@@ -385,97 +380,68 @@ export class ImageStylePanel {
 			}
 		});
 
-		const collageModeRow = this.collageSection.createDiv({
+		const collageGridRow = this.collageSection.createDiv({
 			cls: "intuition-panel__row",
 		});
-		collageModeRow.createSpan({
-			text: "Размер",
+		collageGridRow.createSpan({
+			text: "Сетка",
 			cls: "intuition-panel__label",
 		});
-		this.collageMode = collageModeRow.createEl("select", {
+		this.collageAxis = collageGridRow.createEl("select", {
 			cls: "dropdown intuition-panel__select",
-			attr: { "aria-label": "Режим размера коллажа" },
+			attr: { "aria-label": "Столбцы или строки" },
 		});
-		this.collageMode.createEl("option", { text: "Авто", value: "auto" });
-		this.collageMode.createEl("option", {
-			text: "Фиксированный",
-			value: "fixed",
-		});
-		this.collageMode.addEventListener("change", () => {
-			const mode = normalizeCollageSizeMode(this.collageMode.value);
-			this.collageHooks?.onSizeModeChange(mode);
-			this.syncCollageFixedVisibility(mode);
-		});
-
-		this.collageFixedBlock = this.collageSection.createDiv({
-			cls: "intuition-panel__collage-fixed",
-		});
-
-		const collageAxisRow = this.collageFixedBlock.createDiv({
-			cls: "intuition-panel__row",
-		});
-		collageAxisRow.createSpan({
-			text: "Ось",
-			cls: "intuition-panel__label",
-		});
-		this.collageAxis = collageAxisRow.createEl("select", {
-			cls: "dropdown intuition-panel__select",
-			attr: { "aria-label": "Ширина или высота" },
-		});
-		this.collageAxis.createEl("option", { text: "Ширина", value: "width" });
-		this.collageAxis.createEl("option", { text: "Высота", value: "height" });
+		this.collageAxis.createEl("option", { text: "Столбцы", value: "cols" });
+		this.collageAxis.createEl("option", { text: "Строки", value: "rows" });
 		this.collageAxis.addEventListener("change", () => {
-			this.collageHooks?.onFixedAxisChange(
-				normalizeCollageFixedAxis(this.collageAxis.value),
+			const axis = normalizeCollagePackAxis(this.collageAxis.value);
+			this.collageHooks?.onPackAxisChange(axis);
+			this.collageCountLabel.setText(
+				axis === "rows" ? "Строки" : "Столбцы",
 			);
 		});
 
-		const collageSizeRow = this.collageFixedBlock.createDiv({
+		const collageCountRow = this.collageSection.createDiv({
 			cls: "intuition-panel__row",
 		});
-		collageSizeRow.createSpan({
-			text: "px",
+		this.collageCountLabel = collageCountRow.createSpan({
+			text: "Столбцы",
 			cls: "intuition-panel__label",
 		});
-		const collageSizeWrap = collageSizeRow.createDiv({
+		const collageCountWrap = collageCountRow.createDiv({
 			cls: "intuition-panel__size intuition-panel__size--number",
 		});
-		this.collageFixedSizeSlider = collageSizeWrap.createEl("input", {
+		this.collageCountSlider = collageCountWrap.createEl("input", {
 			type: "range",
 			attr: {
-				min: "40",
-				max: "800",
-				step: "10",
-				"aria-label": "Быстрый размер",
+				min: String(COLLAGE_COUNT_MIN),
+				max: String(COLLAGE_COUNT_MAX),
+				step: "1",
+				"aria-label": "Число столбцов или строк",
 			},
 		});
-		this.collageFixedSize = collageSizeWrap.createEl("input", {
+		this.collageCount = collageCountWrap.createEl("input", {
 			type: "number",
 			cls: "intuition-panel__number",
 			attr: {
-				min: String(COLLAGE_FIXED_SIZE_MIN),
-				max: String(COLLAGE_FIXED_SIZE_MAX),
+				min: String(COLLAGE_COUNT_MIN),
+				max: String(COLLAGE_COUNT_MAX),
 				step: "1",
-				"aria-label": "Размер в пикселях",
+				"aria-label": "Число столбцов или строк",
 			},
 		});
-		const commitFixedSize = () => {
-			const size = clampCollageFixedSize(Number(this.collageFixedSize.value));
-			this.collageFixedSize.value = String(size);
-			this.collageFixedSizeSlider.value = String(
-				Math.min(800, Math.max(40, size)),
-			);
-			this.collageHooks?.onFixedSizeChange(size);
+		const applyCount = (raw: number) => {
+			const count = clampCollageCount(raw);
+			this.collageCountSlider.value = String(count);
+			this.collageCount.value = String(count);
+			this.collageHooks?.onCountChange(count);
 		};
-		this.collageFixedSize.addEventListener("change", commitFixedSize);
-		this.collageFixedSize.addEventListener("blur", commitFixedSize);
-		this.collageFixedSizeSlider.addEventListener("input", () => {
-			const size = clampCollageFixedSize(
-				Number(this.collageFixedSizeSlider.value),
-			);
-			this.collageFixedSize.value = String(size);
-			this.collageHooks?.onFixedSizeChange(size);
-		});
+		this.collageCountSlider.addEventListener("input", () =>
+			applyCount(Number(this.collageCountSlider.value)),
+		);
+		const commitCount = () => applyCount(Number(this.collageCount.value));
+		this.collageCount.addEventListener("change", commitCount);
+		this.collageCount.addEventListener("blur", commitCount);
 
 		const collageApplyRow = this.collageSection.createDiv({
 			cls: "intuition-panel__row intuition-panel__row--full",
@@ -641,11 +607,6 @@ export class ImageStylePanel {
 		this.syncCollageControls();
 	}
 
-	private syncCollageFixedVisibility(mode: CollageSizeMode) {
-		if (mode === "fixed") this.collageFixedBlock.show();
-		else this.collageFixedBlock.hide();
-	}
-
 	private syncCollageControls() {
 		const show = this.nodes.length >= 2 && !!this.collageHooks;
 		if (show) {
@@ -654,16 +615,14 @@ export class ImageStylePanel {
 			this.collageGap.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
 			this.collageGapPx.value = String(gap);
 
-			const mode = normalizeCollageSizeMode(hooks.getSizeMode());
-			this.collageMode.value = mode;
-			this.syncCollageFixedVisibility(mode);
-
-			this.collageAxis.value = normalizeCollageFixedAxis(hooks.getFixedAxis());
-			const size = clampCollageFixedSize(hooks.getFixedSize());
-			this.collageFixedSize.value = String(size);
-			this.collageFixedSizeSlider.value = String(
-				Math.min(800, Math.max(40, size)),
+			const axis = normalizeCollagePackAxis(hooks.getPackAxis());
+			this.collageAxis.value = axis;
+			this.collageCountLabel.setText(
+				axis === "rows" ? "Строки" : "Столбцы",
 			);
+			const count = clampCollageCount(hooks.getCount());
+			this.collageCountSlider.value = String(count);
+			this.collageCount.value = String(count);
 
 			this.collageSection.show();
 		} else {

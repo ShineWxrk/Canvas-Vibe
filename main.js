@@ -765,9 +765,9 @@ function applyImageStylesToCanvas(nodes) {
 }
 
 // collageLayout.ts
-var COLLAGE_FIXED_SIZE_MIN = 16;
-var COLLAGE_FIXED_SIZE_MAX = 4096;
-var COLLAGE_FIXED_SIZE_DEFAULT = 240;
+var COLLAGE_COUNT_MIN = 1;
+var COLLAGE_COUNT_MAX = 20;
+var COLLAGE_COUNT_DEFAULT = 3;
 var COLLAGE_GAP_MIN = 0;
 var COLLAGE_GAP_MAX = 500;
 var COLLAGE_GAP_SLIDER_MAX = 200;
@@ -782,7 +782,7 @@ function layoutMasonry(items, opts) {
   const columns = clamp(
     opts.columns ?? suggestColumns(items.length, widthHint, gap, minCol),
     1,
-    Math.min(6, items.length)
+    Math.min(COLLAGE_COUNT_MAX, items.length)
   );
   const colW = fixedColW ?? (() => {
     const totalWidth = Math.max(
@@ -792,47 +792,58 @@ function layoutMasonry(items, opts) {
     return (totalWidth - gap * (columns - 1)) / columns;
   })();
   const colHeights = Array.from({ length: columns }, () => 0);
+  const colStep = colW + gap;
   for (const item of items) {
     const aspect = Number.isFinite(item.aspect) && item.aspect > 0.05 ? item.aspect : 1;
+    const w = colW;
     const h = Math.max(40, colW / aspect);
-    let col = 0;
-    for (let i = 1; i < columns; i++) {
-      if (colHeights[i] < colHeights[col]) col = i;
+    let bestCol = 0;
+    let bestY = Infinity;
+    for (let c = 0; c < columns; c++) {
+      if (colHeights[c] < bestY) {
+        bestY = colHeights[c];
+        bestCol = c;
+      }
     }
-    const x = opts.originX + col * (colW + gap);
-    const y = opts.originY + colHeights[col];
+    const x = opts.originX + bestCol * colStep;
+    const y = opts.originY + bestY;
     out.set(item.id, {
       x,
       y,
-      width: colW,
+      width: w,
       height: h
     });
-    colHeights[col] += h + gap;
+    colHeights[bestCol] = bestY + h + gap;
   }
   return out;
 }
-function layoutRowPack(items, opts) {
+function layoutExactRows(items, opts) {
   const out = /* @__PURE__ */ new Map();
   if (!items.length) return out;
   const gap = opts.gap ?? 16;
-  const itemH = Math.max(20, opts.itemHeight);
-  const rowWidth = Math.max(itemH, opts.rowWidth);
-  let x = opts.originX;
+  const rows = clamp(opts.rows, 1, Math.min(COLLAGE_COUNT_MAX, items.length));
+  const rowWidth = Math.max(40, opts.rowWidth);
   let y = opts.originY;
-  let rowMaxH = itemH;
-  for (const item of items) {
-    const aspect = Number.isFinite(item.aspect) && item.aspect > 0.05 ? item.aspect : 1;
-    const w = Math.max(20, itemH * aspect);
-    const h = itemH;
-    const atRowStart = x <= opts.originX + 0.5;
-    if (!atRowStart && x + w > opts.originX + rowWidth) {
-      x = opts.originX;
-      y += rowMaxH + gap;
-      rowMaxH = h;
+  for (let r = 0; r < rows; r++) {
+    const start = Math.floor(r * items.length / rows);
+    const end = Math.floor((r + 1) * items.length / rows);
+    const rowItems = items.slice(start, end);
+    if (!rowItems.length) continue;
+    const aspects = rowItems.map(
+      (item) => Number.isFinite(item.aspect) && item.aspect > 0.05 ? item.aspect : 1
+    );
+    const aspectSum = aspects.reduce((s, a) => s + a, 0);
+    const gapsW = gap * Math.max(0, rowItems.length - 1);
+    const h = Math.max(20, (rowWidth - gapsW) / Math.max(0.05, aspectSum));
+    let x = opts.originX;
+    let rowMaxH = h;
+    for (let i = 0; i < rowItems.length; i++) {
+      const w = Math.max(20, h * aspects[i]);
+      out.set(rowItems[i].id, { x, y, width: w, height: h });
+      x += w + gap;
+      rowMaxH = Math.max(rowMaxH, h);
     }
-    out.set(item.id, { x, y, width: w, height: h });
-    x += w + gap;
-    rowMaxH = Math.max(rowMaxH, h);
+    y += rowMaxH + gap;
   }
   return out;
 }
@@ -910,11 +921,11 @@ function restoreNaturalAspectPreservingArea(node) {
   node.render?.();
   return true;
 }
-function clampCollageFixedSize(value) {
-  if (!Number.isFinite(value)) return COLLAGE_FIXED_SIZE_DEFAULT;
+function clampCollageCount(value) {
+  if (!Number.isFinite(value)) return COLLAGE_COUNT_DEFAULT;
   return Math.min(
-    COLLAGE_FIXED_SIZE_MAX,
-    Math.max(COLLAGE_FIXED_SIZE_MIN, Math.round(value))
+    COLLAGE_COUNT_MAX,
+    Math.max(COLLAGE_COUNT_MIN, Math.round(value))
   );
 }
 function clampCollageGap(value) {
@@ -924,11 +935,8 @@ function clampCollageGap(value) {
     Math.max(COLLAGE_GAP_MIN, Math.round(value))
   );
 }
-function normalizeCollageSizeMode(value) {
-  return value === "fixed" ? "fixed" : "auto";
-}
-function normalizeCollageFixedAxis(value) {
-  return value === "height" ? "height" : "width";
+function normalizeCollagePackAxis(value) {
+  return value === "rows" ? "rows" : "cols";
 }
 function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
@@ -1266,94 +1274,68 @@ var ImageStylePanel = class {
         this.collageGapPx.blur();
       }
     });
-    const collageModeRow = this.collageSection.createDiv({
+    const collageGridRow = this.collageSection.createDiv({
       cls: "intuition-panel__row"
     });
-    collageModeRow.createSpan({
-      text: "\u0420\u0430\u0437\u043C\u0435\u0440",
+    collageGridRow.createSpan({
+      text: "\u0421\u0435\u0442\u043A\u0430",
       cls: "intuition-panel__label"
     });
-    this.collageMode = collageModeRow.createEl("select", {
+    this.collageAxis = collageGridRow.createEl("select", {
       cls: "dropdown intuition-panel__select",
-      attr: { "aria-label": "\u0420\u0435\u0436\u0438\u043C \u0440\u0430\u0437\u043C\u0435\u0440\u0430 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" }
+      attr: { "aria-label": "\u0421\u0442\u043E\u043B\u0431\u0446\u044B \u0438\u043B\u0438 \u0441\u0442\u0440\u043E\u043A\u0438" }
     });
-    this.collageMode.createEl("option", { text: "\u0410\u0432\u0442\u043E", value: "auto" });
-    this.collageMode.createEl("option", {
-      text: "\u0424\u0438\u043A\u0441\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439",
-      value: "fixed"
-    });
-    this.collageMode.addEventListener("change", () => {
-      const mode = normalizeCollageSizeMode(this.collageMode.value);
-      this.collageHooks?.onSizeModeChange(mode);
-      this.syncCollageFixedVisibility(mode);
-    });
-    this.collageFixedBlock = this.collageSection.createDiv({
-      cls: "intuition-panel__collage-fixed"
-    });
-    const collageAxisRow = this.collageFixedBlock.createDiv({
-      cls: "intuition-panel__row"
-    });
-    collageAxisRow.createSpan({
-      text: "\u041E\u0441\u044C",
-      cls: "intuition-panel__label"
-    });
-    this.collageAxis = collageAxisRow.createEl("select", {
-      cls: "dropdown intuition-panel__select",
-      attr: { "aria-label": "\u0428\u0438\u0440\u0438\u043D\u0430 \u0438\u043B\u0438 \u0432\u044B\u0441\u043E\u0442\u0430" }
-    });
-    this.collageAxis.createEl("option", { text: "\u0428\u0438\u0440\u0438\u043D\u0430", value: "width" });
-    this.collageAxis.createEl("option", { text: "\u0412\u044B\u0441\u043E\u0442\u0430", value: "height" });
+    this.collageAxis.createEl("option", { text: "\u0421\u0442\u043E\u043B\u0431\u0446\u044B", value: "cols" });
+    this.collageAxis.createEl("option", { text: "\u0421\u0442\u0440\u043E\u043A\u0438", value: "rows" });
     this.collageAxis.addEventListener("change", () => {
-      this.collageHooks?.onFixedAxisChange(
-        normalizeCollageFixedAxis(this.collageAxis.value)
+      const axis = normalizeCollagePackAxis(this.collageAxis.value);
+      this.collageHooks?.onPackAxisChange(axis);
+      this.collageCountLabel.setText(
+        axis === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B"
       );
     });
-    const collageSizeRow = this.collageFixedBlock.createDiv({
+    const collageCountRow = this.collageSection.createDiv({
       cls: "intuition-panel__row"
     });
-    collageSizeRow.createSpan({
-      text: "px",
+    this.collageCountLabel = collageCountRow.createSpan({
+      text: "\u0421\u0442\u043E\u043B\u0431\u0446\u044B",
       cls: "intuition-panel__label"
     });
-    const collageSizeWrap = collageSizeRow.createDiv({
+    const collageCountWrap = collageCountRow.createDiv({
       cls: "intuition-panel__size intuition-panel__size--number"
     });
-    this.collageFixedSizeSlider = collageSizeWrap.createEl("input", {
+    this.collageCountSlider = collageCountWrap.createEl("input", {
       type: "range",
       attr: {
-        min: "40",
-        max: "800",
-        step: "10",
-        "aria-label": "\u0411\u044B\u0441\u0442\u0440\u044B\u0439 \u0440\u0430\u0437\u043C\u0435\u0440"
+        min: String(COLLAGE_COUNT_MIN),
+        max: String(COLLAGE_COUNT_MAX),
+        step: "1",
+        "aria-label": "\u0427\u0438\u0441\u043B\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u043E\u0432 \u0438\u043B\u0438 \u0441\u0442\u0440\u043E\u043A"
       }
     });
-    this.collageFixedSize = collageSizeWrap.createEl("input", {
+    this.collageCount = collageCountWrap.createEl("input", {
       type: "number",
       cls: "intuition-panel__number",
       attr: {
-        min: String(COLLAGE_FIXED_SIZE_MIN),
-        max: String(COLLAGE_FIXED_SIZE_MAX),
+        min: String(COLLAGE_COUNT_MIN),
+        max: String(COLLAGE_COUNT_MAX),
         step: "1",
-        "aria-label": "\u0420\u0430\u0437\u043C\u0435\u0440 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445"
+        "aria-label": "\u0427\u0438\u0441\u043B\u043E \u0441\u0442\u043E\u043B\u0431\u0446\u043E\u0432 \u0438\u043B\u0438 \u0441\u0442\u0440\u043E\u043A"
       }
     });
-    const commitFixedSize = () => {
-      const size = clampCollageFixedSize(Number(this.collageFixedSize.value));
-      this.collageFixedSize.value = String(size);
-      this.collageFixedSizeSlider.value = String(
-        Math.min(800, Math.max(40, size))
-      );
-      this.collageHooks?.onFixedSizeChange(size);
+    const applyCount = (raw) => {
+      const count = clampCollageCount(raw);
+      this.collageCountSlider.value = String(count);
+      this.collageCount.value = String(count);
+      this.collageHooks?.onCountChange(count);
     };
-    this.collageFixedSize.addEventListener("change", commitFixedSize);
-    this.collageFixedSize.addEventListener("blur", commitFixedSize);
-    this.collageFixedSizeSlider.addEventListener("input", () => {
-      const size = clampCollageFixedSize(
-        Number(this.collageFixedSizeSlider.value)
-      );
-      this.collageFixedSize.value = String(size);
-      this.collageHooks?.onFixedSizeChange(size);
-    });
+    this.collageCountSlider.addEventListener(
+      "input",
+      () => applyCount(Number(this.collageCountSlider.value))
+    );
+    const commitCount = () => applyCount(Number(this.collageCount.value));
+    this.collageCount.addEventListener("change", commitCount);
+    this.collageCount.addEventListener("blur", commitCount);
     const collageApplyRow = this.collageSection.createDiv({
       cls: "intuition-panel__row intuition-panel__row--full"
     });
@@ -1490,10 +1472,6 @@ var ImageStylePanel = class {
   syncCollageFromHooks() {
     this.syncCollageControls();
   }
-  syncCollageFixedVisibility(mode) {
-    if (mode === "fixed") this.collageFixedBlock.show();
-    else this.collageFixedBlock.hide();
-  }
   syncCollageControls() {
     const show = this.nodes.length >= 2 && !!this.collageHooks;
     if (show) {
@@ -1501,15 +1479,14 @@ var ImageStylePanel = class {
       const gap = clampCollageGap(hooks.getGap());
       this.collageGap.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
       this.collageGapPx.value = String(gap);
-      const mode = normalizeCollageSizeMode(hooks.getSizeMode());
-      this.collageMode.value = mode;
-      this.syncCollageFixedVisibility(mode);
-      this.collageAxis.value = normalizeCollageFixedAxis(hooks.getFixedAxis());
-      const size = clampCollageFixedSize(hooks.getFixedSize());
-      this.collageFixedSize.value = String(size);
-      this.collageFixedSizeSlider.value = String(
-        Math.min(800, Math.max(40, size))
+      const axis = normalizeCollagePackAxis(hooks.getPackAxis());
+      this.collageAxis.value = axis;
+      this.collageCountLabel.setText(
+        axis === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B"
       );
+      const count = clampCollageCount(hooks.getCount());
+      this.collageCountSlider.value = String(count);
+      this.collageCount.value = String(count);
       this.collageSection.show();
     } else {
       this.collageSection.hide();
@@ -3562,9 +3539,8 @@ var DEFAULT_SETTINGS = {
   },
   canvasChrome: {},
   collageGap: 16,
-  collageSizeMode: "auto",
-  collageFixedAxis: "width",
-  collageFixedSize: COLLAGE_FIXED_SIZE_DEFAULT
+  collagePackAxis: "cols",
+  collageCount: COLLAGE_COUNT_DEFAULT
 };
 var VIBE_STRENGTH_SCALE = 2;
 var VIBE_SPARKLE_SCALE = 3;
@@ -3823,15 +3799,23 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.settings.collageGap = clampCollageGap(
       this.settings.collageGap ?? DEFAULT_SETTINGS.collageGap
     );
-    this.settings.collageSizeMode = normalizeCollageSizeMode(
-      this.settings.collageSizeMode ?? DEFAULT_SETTINGS.collageSizeMode
+    const rawAny = raw ?? {};
+    const hadLegacyCollage = "collageArrange" in rawAny || "collageCenterSize" in rawAny || "collageSizeMode" in rawAny || "collageFixedAxis" in rawAny || "collageFixedSize" in rawAny || !("collagePackAxis" in rawAny) && !("collageCount" in rawAny);
+    this.settings.collagePackAxis = normalizeCollagePackAxis(
+      rawAny.collagePackAxis ?? DEFAULT_SETTINGS.collagePackAxis
     );
-    this.settings.collageFixedAxis = normalizeCollageFixedAxis(
-      this.settings.collageFixedAxis ?? DEFAULT_SETTINGS.collageFixedAxis
-    );
-    this.settings.collageFixedSize = clampCollageFixedSize(
-      this.settings.collageFixedSize ?? DEFAULT_SETTINGS.collageFixedSize
-    );
+    const packAxis = this.settings.collagePackAxis;
+    const legacyCount = typeof rawAny.collageCount === "number" ? rawAny.collageCount : packAxis === "rows" && typeof rawAny.collageRows === "number" ? rawAny.collageRows : typeof rawAny.collageCols === "number" ? rawAny.collageCols : DEFAULT_SETTINGS.collageCount;
+    this.settings.collageCount = clampCollageCount(legacyCount);
+    if (hadLegacyCollage) migrated = true;
+    const settingsBag = this.settings;
+    delete settingsBag.collageArrange;
+    delete settingsBag.collageCenterSize;
+    delete settingsBag.collageSizeMode;
+    delete settingsBag.collageFixedAxis;
+    delete settingsBag.collageFixedSize;
+    delete settingsBag.collageCols;
+    delete settingsBag.collageRows;
     if (migrated) await this.saveSettings();
   }
   async saveSettings() {
@@ -4885,21 +4869,15 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
         this.queueCollageSettingsSave();
         this.syncAllCollageButtons();
       },
-      getSizeMode: () => normalizeCollageSizeMode(this.settings.collageSizeMode),
-      onSizeModeChange: (mode) => {
-        this.settings.collageSizeMode = normalizeCollageSizeMode(mode);
+      getPackAxis: () => normalizeCollagePackAxis(this.settings.collagePackAxis),
+      onPackAxisChange: (axis) => {
+        this.settings.collagePackAxis = normalizeCollagePackAxis(axis);
         this.queueCollageSettingsSave();
         this.syncAllCollageButtons();
       },
-      getFixedAxis: () => normalizeCollageFixedAxis(this.settings.collageFixedAxis),
-      onFixedAxisChange: (axis) => {
-        this.settings.collageFixedAxis = normalizeCollageFixedAxis(axis);
-        this.queueCollageSettingsSave();
-        this.syncAllCollageButtons();
-      },
-      getFixedSize: () => clampCollageFixedSize(this.settings.collageFixedSize),
-      onFixedSizeChange: (size) => {
-        this.settings.collageFixedSize = clampCollageFixedSize(size);
+      getCount: () => clampCollageCount(this.settings.collageCount),
+      onCountChange: (count) => {
+        this.settings.collageCount = clampCollageCount(count);
         this.queueCollageSettingsSave();
         this.syncAllCollageButtons();
       },
@@ -5132,120 +5110,79 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     gapRow.appendChild(gapLabel);
     gapRow.appendChild(slider);
     gapRow.appendChild(gapInput);
-    const modeRow = document.createElement("div");
-    modeRow.className = "intuition-collage-panel__row";
-    const modeLabel = document.createElement("span");
-    modeLabel.className = "intuition-collage-panel__label";
-    modeLabel.textContent = "\u0420\u0430\u0437\u043C\u0435\u0440";
-    const modeSelect = document.createElement("select");
-    modeSelect.className = "dropdown intuition-collage-panel__select";
-    modeSelect.setAttribute("data-collage-mode", "1");
-    modeSelect.setAttribute("aria-label", "\u0420\u0435\u0436\u0438\u043C \u0440\u0430\u0437\u043C\u0435\u0440\u0430 \u043A\u043E\u043B\u043B\u0430\u0436\u0430");
-    for (const opt of [
-      { value: "auto", label: "\u0410\u0432\u0442\u043E" },
-      { value: "fixed", label: "\u0424\u0438\u043A\u0441\u0438\u0440\u043E\u0432\u0430\u043D\u043D\u044B\u0439" }
-    ]) {
-      const option = document.createElement("option");
-      option.value = opt.value;
-      option.textContent = opt.label;
-      modeSelect.appendChild(option);
-    }
-    modeSelect.value = normalizeCollageSizeMode(this.settings.collageSizeMode);
-    modeSelect.addEventListener("pointerdown", (e) => e.stopPropagation());
-    modeSelect.addEventListener("click", (e) => e.stopPropagation());
-    modeSelect.addEventListener("change", () => {
-      this.settings.collageSizeMode = normalizeCollageSizeMode(modeSelect.value);
-      this.queueCollageSettingsSave();
-      this.syncAllCollageButtons();
-    });
-    modeRow.appendChild(modeLabel);
-    modeRow.appendChild(modeSelect);
-    const fixedBlock = document.createElement("div");
-    fixedBlock.className = "intuition-collage-panel__fixed";
-    fixedBlock.setAttribute("data-collage-fixed", "1");
-    const axisRow = document.createElement("div");
-    axisRow.className = "intuition-collage-panel__row";
-    const axisLabel = document.createElement("span");
-    axisLabel.className = "intuition-collage-panel__label";
-    axisLabel.textContent = "\u041E\u0441\u044C";
+    const gridRow = document.createElement("div");
+    gridRow.className = "intuition-collage-panel__row";
+    const gridLabel = document.createElement("span");
+    gridLabel.className = "intuition-collage-panel__label";
+    gridLabel.textContent = "\u0421\u0435\u0442\u043A\u0430";
     const axisSelect = document.createElement("select");
     axisSelect.className = "dropdown intuition-collage-panel__select";
     axisSelect.setAttribute("data-collage-axis", "1");
-    axisSelect.setAttribute("aria-label", "\u0428\u0438\u0440\u0438\u043D\u0430 \u0438\u043B\u0438 \u0432\u044B\u0441\u043E\u0442\u0430");
+    axisSelect.setAttribute("aria-label", "\u0421\u0442\u043E\u043B\u0431\u0446\u044B \u0438\u043B\u0438 \u0441\u0442\u0440\u043E\u043A\u0438");
     for (const opt of [
-      { value: "width", label: "\u0428\u0438\u0440\u0438\u043D\u0430" },
-      { value: "height", label: "\u0412\u044B\u0441\u043E\u0442\u0430" }
+      { value: "cols", label: "\u0421\u0442\u043E\u043B\u0431\u0446\u044B" },
+      { value: "rows", label: "\u0421\u0442\u0440\u043E\u043A\u0438" }
     ]) {
       const option = document.createElement("option");
       option.value = opt.value;
       option.textContent = opt.label;
       axisSelect.appendChild(option);
     }
-    axisSelect.value = normalizeCollageFixedAxis(this.settings.collageFixedAxis);
+    axisSelect.value = normalizeCollagePackAxis(this.settings.collagePackAxis);
     axisSelect.addEventListener("pointerdown", (e) => e.stopPropagation());
     axisSelect.addEventListener("click", (e) => e.stopPropagation());
-    axisSelect.addEventListener("change", () => {
-      this.settings.collageFixedAxis = normalizeCollageFixedAxis(axisSelect.value);
-      this.queueCollageSettingsSave();
-      this.syncAllCollageButtons();
-    });
-    axisRow.appendChild(axisLabel);
-    axisRow.appendChild(axisSelect);
-    const sizeRow = document.createElement("div");
-    sizeRow.className = "intuition-collage-panel__row";
-    const sizeLabel = document.createElement("span");
-    sizeLabel.className = "intuition-collage-panel__label";
-    sizeLabel.textContent = "px";
-    const sizeInput = document.createElement("input");
-    sizeInput.type = "number";
-    sizeInput.min = String(COLLAGE_FIXED_SIZE_MIN);
-    sizeInput.max = String(COLLAGE_FIXED_SIZE_MAX);
-    sizeInput.step = "1";
-    sizeInput.className = "intuition-collage-panel__number";
-    sizeInput.setAttribute("data-collage-size", "1");
-    sizeInput.setAttribute("aria-label", "\u0420\u0430\u0437\u043C\u0435\u0440 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445");
-    sizeInput.value = String(
-      clampCollageFixedSize(this.settings.collageFixedSize)
-    );
-    sizeInput.addEventListener("pointerdown", (e) => e.stopPropagation());
-    sizeInput.addEventListener("click", (e) => e.stopPropagation());
-    const commitSize = () => {
-      const size = clampCollageFixedSize(Number(sizeInput.value));
-      sizeInput.value = String(size);
-      this.settings.collageFixedSize = size;
+    const countLabel = document.createElement("span");
+    countLabel.className = "intuition-collage-panel__label";
+    countLabel.setAttribute("data-collage-count-label", "1");
+    countLabel.textContent = normalizeCollagePackAxis(this.settings.collagePackAxis) === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B";
+    const countSlider = document.createElement("input");
+    countSlider.type = "range";
+    countSlider.min = String(COLLAGE_COUNT_MIN);
+    countSlider.max = String(COLLAGE_COUNT_MAX);
+    countSlider.step = "1";
+    countSlider.className = "intuition-collage-panel__slider";
+    countSlider.setAttribute("data-collage-count-slider", "1");
+    countSlider.value = String(clampCollageCount(this.settings.collageCount));
+    const countInput = document.createElement("input");
+    countInput.type = "number";
+    countInput.min = String(COLLAGE_COUNT_MIN);
+    countInput.max = String(COLLAGE_COUNT_MAX);
+    countInput.step = "1";
+    countInput.className = "intuition-collage-panel__number";
+    countInput.setAttribute("data-collage-count", "1");
+    countInput.value = String(clampCollageCount(this.settings.collageCount));
+    const applyCount = (raw) => {
+      const count = clampCollageCount(raw);
+      countSlider.value = String(count);
+      countInput.value = String(count);
+      this.settings.collageCount = count;
       this.queueCollageSettingsSave();
       this.syncAllCollageButtons();
     };
-    sizeInput.addEventListener("change", commitSize);
-    sizeInput.addEventListener("blur", commitSize);
-    const sizeSlider = document.createElement("input");
-    sizeSlider.type = "range";
-    sizeSlider.min = "40";
-    sizeSlider.max = "800";
-    sizeSlider.step = "10";
-    sizeSlider.className = "intuition-collage-panel__slider";
-    sizeSlider.setAttribute("data-collage-size-slider", "1");
-    sizeSlider.setAttribute("aria-label", "\u0411\u044B\u0441\u0442\u0440\u044B\u0439 \u0440\u0430\u0437\u043C\u0435\u0440");
-    sizeSlider.value = String(
-      Math.min(
-        800,
-        Math.max(40, clampCollageFixedSize(this.settings.collageFixedSize))
-      )
-    );
-    sizeSlider.addEventListener("pointerdown", (e) => e.stopPropagation());
-    sizeSlider.addEventListener("click", (e) => e.stopPropagation());
-    sizeSlider.addEventListener("input", () => {
-      const size = clampCollageFixedSize(Number(sizeSlider.value));
-      sizeInput.value = String(size);
-      this.settings.collageFixedSize = size;
+    axisSelect.addEventListener("change", () => {
+      this.settings.collagePackAxis = normalizeCollagePackAxis(axisSelect.value);
+      countLabel.textContent = normalizeCollagePackAxis(axisSelect.value) === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B";
       this.queueCollageSettingsSave();
       this.syncAllCollageButtons();
     });
-    sizeRow.appendChild(sizeLabel);
-    sizeRow.appendChild(sizeSlider);
-    sizeRow.appendChild(sizeInput);
-    fixedBlock.appendChild(axisRow);
-    fixedBlock.appendChild(sizeRow);
+    countSlider.addEventListener("pointerdown", (e) => e.stopPropagation());
+    countSlider.addEventListener("click", (e) => e.stopPropagation());
+    countSlider.addEventListener(
+      "input",
+      () => applyCount(Number(countSlider.value))
+    );
+    countInput.addEventListener("pointerdown", (e) => e.stopPropagation());
+    countInput.addEventListener("click", (e) => e.stopPropagation());
+    const commitCount = () => applyCount(Number(countInput.value));
+    countInput.addEventListener("change", commitCount);
+    countInput.addEventListener("blur", commitCount);
+    gridRow.appendChild(gridLabel);
+    gridRow.appendChild(axisSelect);
+    const countRow = document.createElement("div");
+    countRow.className = "intuition-collage-panel__row";
+    countRow.appendChild(countLabel);
+    countRow.appendChild(countSlider);
+    countRow.appendChild(countInput);
     const apply = document.createElement("button");
     apply.type = "button";
     apply.className = "mod-cta intuition-collage-panel__apply";
@@ -5258,8 +5195,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     });
     panel.appendChild(title);
     panel.appendChild(gapRow);
-    panel.appendChild(modeRow);
-    panel.appendChild(fixedBlock);
+    panel.appendChild(gridRow);
+    panel.appendChild(countRow);
     panel.appendChild(apply);
     host.appendChild(panel);
     this.collagePanels.set(id, panel);
@@ -5279,27 +5216,28 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
   }
   syncCollagePanelControls(panel) {
     const gap = clampCollageGap(this.settings.collageGap);
-    const mode = normalizeCollageSizeMode(this.settings.collageSizeMode);
-    const axis = normalizeCollageFixedAxis(this.settings.collageFixedAxis);
-    const size = clampCollageFixedSize(this.settings.collageFixedSize);
+    const axis = normalizeCollagePackAxis(this.settings.collagePackAxis);
+    const count = clampCollageCount(this.settings.collageCount);
     const slider = panel.querySelector("[data-collage-gap]");
     const gapPx = panel.querySelector("[data-collage-gap-px]");
     if (slider) slider.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
     if (gapPx) gapPx.value = String(gap);
-    const modeSelect = panel.querySelector("[data-collage-mode]");
-    if (modeSelect) modeSelect.value = mode;
     const axisSelect = panel.querySelector("[data-collage-axis]");
     if (axisSelect) axisSelect.value = axis;
-    const sizeInput = panel.querySelector("[data-collage-size]");
-    if (sizeInput) sizeInput.value = String(size);
-    const sizeSlider = panel.querySelector(
-      "[data-collage-size-slider]"
+    const countLabel = panel.querySelector(
+      "[data-collage-count-label]"
     );
-    if (sizeSlider) {
-      sizeSlider.value = String(Math.min(800, Math.max(40, size)));
+    if (countLabel) {
+      countLabel.textContent = axis === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B";
     }
-    const fixedBlock = panel.querySelector("[data-collage-fixed]");
-    if (fixedBlock) fixedBlock.hidden = mode !== "fixed";
+    const countSlider = panel.querySelector(
+      "[data-collage-count-slider]"
+    );
+    const countInput = panel.querySelector(
+      "[data-collage-count]"
+    );
+    if (countSlider) countSlider.value = String(count);
+    if (countInput) countInput.value = String(count);
   }
   syncCollageButton(leaf, button) {
     if (!button) return;
@@ -5341,7 +5279,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       void this.saveSettings();
     }, 200);
   }
-  /** v1: one-shot Pinterest masonry for selected images. */
+  /** One-shot collage: tile masonry by columns, or justified rows. */
   arrangeSelectedImagesCollage(view) {
     const selected = this.getSelectedImageNodes(view);
     if (selected.length < 2) {
@@ -5349,65 +5287,51 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       return;
     }
     const gap = clampCollageGap(this.settings.collageGap);
-    const mode = normalizeCollageSizeMode(this.settings.collageSizeMode);
-    const axis = normalizeCollageFixedAxis(this.settings.collageFixedAxis);
-    const fixedSize = clampCollageFixedSize(this.settings.collageFixedSize);
+    const axis = normalizeCollagePackAxis(this.settings.collagePackAxis);
+    const count = clampCollageCount(this.settings.collageCount);
     const ordered = sortNodesReadingOrder(selected);
     const box = boundingBox(ordered);
     const items = ordered.map((node) => ({
       id: node.id,
       aspect: aspectFromImageNode(node)
     }));
+    const totalWidth = Math.max(
+      box.width,
+      120 * Math.min(count, ordered.length) + gap * Math.max(0, Math.min(count, ordered.length) - 1)
+    );
     let packed;
-    if (mode === "fixed" && axis === "height") {
-      const avgAspect = items.reduce((sum, it) => sum + it.aspect, 0) / items.length || 1;
-      const columns = Math.min(
-        4,
-        Math.max(2, Math.round(Math.sqrt(ordered.length)))
-      );
-      const rowWidth = Math.max(
-        box.width,
-        columns * fixedSize * avgAspect + gap * (columns - 1)
-      );
-      packed = layoutRowPack(items, {
+    if (axis === "rows") {
+      const rows = Math.min(count, items.length);
+      packed = layoutExactRows(items, {
         originX: box.x,
         originY: box.y,
-        rowWidth,
-        itemHeight: fixedSize,
-        gap
-      });
-    } else if (mode === "fixed") {
-      packed = layoutMasonry(items, {
-        originX: box.x,
-        originY: box.y,
-        columnWidth: fixedSize,
+        rowWidth: totalWidth,
+        rows,
         gap
       });
     } else {
-      const totalWidth = Math.max(
-        box.width,
-        Math.min(960, 160 * Math.min(4, ordered.length) + gap * 3)
-      );
+      const columns = Math.min(count, items.length);
       packed = layoutMasonry(items, {
         originX: box.x,
         originY: box.y,
         totalWidth,
+        columns,
         gap
       });
     }
     for (const node of ordered) {
       const rect = packed.get(node.id);
       if (!rect) continue;
-      node.x = rect.x;
-      node.y = rect.y;
-      node.width = rect.width;
-      node.height = rect.height;
+      node.x = Math.round(rect.x);
+      node.y = Math.round(rect.y);
+      node.width = Math.max(1, Math.round(rect.width));
+      node.height = Math.max(1, Math.round(rect.height));
       node.render?.();
     }
     view.canvas?.requestSave?.();
-    const sizeNote = mode === "fixed" ? ` \xB7 ${axis === "height" ? "H" : "W"} ${fixedSize}px` : "";
+    const axisNote = axis === "rows" ? ` \xB7 ${count} \u0441\u0442\u0440.` : ` \xB7 ${count} \u0441\u0442\u043B\u0431.`;
     new import_obsidian4.Notice(
-      `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u0437\u0430\u0437\u043E\u0440 ${gap}px${sizeNote}`,
+      `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u0437\u0430\u0437\u043E\u0440 ${gap}px${axisNote}`,
       1400
     );
   }

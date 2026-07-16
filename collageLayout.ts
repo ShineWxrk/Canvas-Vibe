@@ -1,11 +1,11 @@
-/** Pinterest-style column masonry for Canvas image nodes (v1: one-shot layout). */
+/** Pinterest-style column masonry / row pack for Canvas image nodes (v1: one-shot layout). */
 
-export type CollageSizeMode = "auto" | "fixed";
-export type CollageFixedAxis = "width" | "height";
+/** Which count drives tile layout: columns (masonry) or rows (row-pack). */
+export type CollagePackAxis = "cols" | "rows";
 
-export const COLLAGE_FIXED_SIZE_MIN = 16;
-export const COLLAGE_FIXED_SIZE_MAX = 4096;
-export const COLLAGE_FIXED_SIZE_DEFAULT = 240;
+export const COLLAGE_COUNT_MIN = 1;
+export const COLLAGE_COUNT_MAX = 20;
+export const COLLAGE_COUNT_DEFAULT = 3;
 export const COLLAGE_GAP_MIN = 0;
 /** Manual px input + clamp; slider may use a lower max for easy dragging. */
 export const COLLAGE_GAP_MAX = 500;
@@ -40,13 +40,13 @@ export interface MasonryOptions {
 	minColumnWidth?: number;
 }
 
-export interface RowPackOptions {
+export interface ExactRowsOptions {
 	originX: number;
 	originY: number;
-	/** Max row width before wrapping; oversized items still place alone */
+	/** Target width each row should fill */
 	rowWidth: number;
-	/** Fixed height for every item (width = height * aspect) */
-	itemHeight: number;
+	/** Exact number of rows to pack into */
+	rows: number;
 	gap?: number;
 }
 
@@ -73,13 +73,14 @@ export function layoutMasonry(
 
 	const widthHint =
 		fixedColW != null
-			? fixedColW * Math.min(4, items.length) + gap * Math.max(0, Math.min(3, items.length - 1))
+			? fixedColW * Math.min(4, items.length) +
+				gap * Math.max(0, Math.min(3, items.length - 1))
 			: Math.max(opts.totalWidth ?? 600, minCol);
 
 	const columns = clamp(
 		opts.columns ?? suggestColumns(items.length, widthHint, gap, minCol),
 		1,
-		Math.min(6, items.length),
+		Math.min(COLLAGE_COUNT_MAX, items.length),
 	);
 
 	const colW =
@@ -93,70 +94,79 @@ export function layoutMasonry(
 		})();
 
 	const colHeights = Array.from({ length: columns }, () => 0);
+	const colStep = colW + gap;
 
 	for (const item of items) {
-		const aspect = Number.isFinite(item.aspect) && item.aspect > 0.05
-			? item.aspect
-			: 1;
+		const aspect =
+			Number.isFinite(item.aspect) && item.aspect > 0.05
+				? item.aspect
+				: 1;
+		const w = colW;
 		const h = Math.max(40, colW / aspect);
 
-		let col = 0;
-		for (let i = 1; i < columns; i++) {
-			if (colHeights[i] < colHeights[col]) col = i;
+		let bestCol = 0;
+		let bestY = Infinity;
+		for (let c = 0; c < columns; c++) {
+			if (colHeights[c] < bestY) {
+				bestY = colHeights[c];
+				bestCol = c;
+			}
 		}
 
-		const x = opts.originX + col * (colW + gap);
-		const y = opts.originY + colHeights[col];
+		const x = opts.originX + bestCol * colStep;
+		const y = opts.originY + bestY;
 
 		out.set(item.id, {
 			x,
 			y,
-			width: colW,
+			width: w,
 			height: h,
 		});
 
-		colHeights[col] += h + gap;
+		colHeights[bestCol] = bestY + h + gap;
 	}
 
 	return out;
 }
 
 /**
- * Pack items into rows with a fixed height per photo (width from aspect).
- * Wraps when the next item would exceed `rowWidth`.
+ * Pack items into exactly `rows` justified rows (equal height within a row,
+ * widths from aspect so the row fills `rowWidth`). Preserves reading order.
  */
-export function layoutRowPack(
+export function layoutExactRows(
 	items: MasonryItem[],
-	opts: RowPackOptions,
+	opts: ExactRowsOptions,
 ): Map<string, MasonryRect> {
 	const out = new Map<string, MasonryRect>();
 	if (!items.length) return out;
 
 	const gap = opts.gap ?? 16;
-	const itemH = Math.max(20, opts.itemHeight);
-	const rowWidth = Math.max(itemH, opts.rowWidth);
+	const rows = clamp(opts.rows, 1, Math.min(COLLAGE_COUNT_MAX, items.length));
+	const rowWidth = Math.max(40, opts.rowWidth);
 
-	let x = opts.originX;
 	let y = opts.originY;
-	let rowMaxH = itemH;
+	for (let r = 0; r < rows; r++) {
+		const start = Math.floor((r * items.length) / rows);
+		const end = Math.floor(((r + 1) * items.length) / rows);
+		const rowItems = items.slice(start, end);
+		if (!rowItems.length) continue;
 
-	for (const item of items) {
-		const aspect = Number.isFinite(item.aspect) && item.aspect > 0.05
-			? item.aspect
-			: 1;
-		const w = Math.max(20, itemH * aspect);
-		const h = itemH;
+		const aspects = rowItems.map((item) =>
+			Number.isFinite(item.aspect) && item.aspect > 0.05 ? item.aspect : 1,
+		);
+		const aspectSum = aspects.reduce((s, a) => s + a, 0);
+		const gapsW = gap * Math.max(0, rowItems.length - 1);
+		const h = Math.max(20, (rowWidth - gapsW) / Math.max(0.05, aspectSum));
 
-		const atRowStart = x <= opts.originX + 0.5;
-		if (!atRowStart && x + w > opts.originX + rowWidth) {
-			x = opts.originX;
-			y += rowMaxH + gap;
-			rowMaxH = h;
+		let x = opts.originX;
+		let rowMaxH = h;
+		for (let i = 0; i < rowItems.length; i++) {
+			const w = Math.max(20, h * aspects[i]);
+			out.set(rowItems[i].id, { x, y, width: w, height: h });
+			x += w + gap;
+			rowMaxH = Math.max(rowMaxH, h);
 		}
-
-		out.set(item.id, { x, y, width: w, height: h });
-		x += w + gap;
-		rowMaxH = Math.max(rowMaxH, h);
+		y += rowMaxH + gap;
 	}
 
 	return out;
@@ -276,11 +286,11 @@ export function restoreNaturalAspectPreservingArea(node: {
 	return true;
 }
 
-export function clampCollageFixedSize(value: number): number {
-	if (!Number.isFinite(value)) return COLLAGE_FIXED_SIZE_DEFAULT;
+export function clampCollageCount(value: number): number {
+	if (!Number.isFinite(value)) return COLLAGE_COUNT_DEFAULT;
 	return Math.min(
-		COLLAGE_FIXED_SIZE_MAX,
-		Math.max(COLLAGE_FIXED_SIZE_MIN, Math.round(value)),
+		COLLAGE_COUNT_MAX,
+		Math.max(COLLAGE_COUNT_MIN, Math.round(value)),
 	);
 }
 
@@ -292,12 +302,8 @@ export function clampCollageGap(value: number): number {
 	);
 }
 
-export function normalizeCollageSizeMode(value: unknown): CollageSizeMode {
-	return value === "fixed" ? "fixed" : "auto";
-}
-
-export function normalizeCollageFixedAxis(value: unknown): CollageFixedAxis {
-	return value === "height" ? "height" : "width";
+export function normalizeCollagePackAxis(value: unknown): CollagePackAxis {
+	return value === "rows" ? "rows" : "cols";
 }
 
 function clamp(n: number, min: number, max: number) {
