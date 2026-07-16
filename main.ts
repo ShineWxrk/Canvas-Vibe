@@ -42,6 +42,7 @@ import {
 	type VibeSparkleConfig,
 } from "./vibeSparkles";
 import { FpsOverlay } from "./fpsOverlay";
+import { PhotoPresentation, type PresentationSlide } from "./photoPresentation";
 import {
 	aspectFromImageNode,
 	boundingBox,
@@ -233,6 +234,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	private collagePanels = new Map<string, HTMLElement>();
 	private canvasPanels = new Map<string, CanvasStylePanel>();
 	private fpsOverlays = new Map<string, FpsOverlay>();
+	private photoPresentations = new Map<string, PhotoPresentation>();
 	private vibeStrengthSaveTimer = 0;
 	private chromeSaveTimer = 0;
 	private collageGapSaveTimer = 0;
@@ -331,6 +333,36 @@ export default class IntuitionCanvasPlugin extends Plugin {
 				return true;
 			},
 		});
+
+		this.addCommand({
+			id: "present-selected-images",
+			name: "Present selected images (slideshow)",
+			checkCallback: (checking) => {
+				const leaf = this.getActiveCanvasLeaf();
+				if (!leaf) return false;
+				const images = this.getSelectedImageNodes(
+					leaf.view as CanvasViewLike,
+				);
+				if (checking) return images.length >= 1;
+				this.startPhotoPresentation(leaf);
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "stop-photo-presentation",
+			name: "Stop photo presentation",
+			checkCallback: (checking) => {
+				const leaf = this.getActiveCanvasLeaf();
+				if (!leaf) return false;
+				const id =
+					(leaf as WorkspaceLeaf & { id?: string }).id ?? String(leaf);
+				const active = this.photoPresentations.get(id)?.isActive();
+				if (checking) return !!active;
+				this.photoPresentations.get(id)?.stop();
+				return true;
+			},
+		});
 	}
 
 	onunload() {
@@ -351,6 +383,8 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		this.canvasPanels.clear();
 		for (const fps of this.fpsOverlays.values()) fps.destroy();
 		this.fpsOverlays.clear();
+		for (const present of this.photoPresentations.values()) present.destroy();
+		this.photoPresentations.clear();
 		if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
 		if (this.chromeSaveTimer) window.clearTimeout(this.chromeSaveTimer);
 		if (this.collageGapSaveTimer) window.clearTimeout(this.collageGapSaveTimer);
@@ -381,6 +415,9 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		document.querySelectorAll(`[${CHROME_BTN_ATTR}]`).forEach((el) => el.remove());
 		document
 			.querySelectorAll("[data-intuition-canvas-panel]")
+			.forEach((el) => el.remove());
+		document
+			.querySelectorAll("[data-intuition-photo-presentation]")
 			.forEach((el) => el.remove());
 		document.getElementById("intuition-canvas-label-style")?.remove();
 		document.body.classList.remove(HIDE_CLASS);
@@ -1857,6 +1894,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 				this.syncAllCollageButtons();
 			},
 			onArrange: () => this.arrangeSelectedImagesCollage(view),
+			onPresent: () => this.startPhotoPresentation(leaf),
 		});
 		this.imagePanels.set(id, panel);
 	}
@@ -1999,16 +2037,18 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		const textNode = this.getSelectedTextNode(view);
 		const imageNodes = this.getSelectedImageNodes(view);
 
-		if (textNode && imageNodes.length === 0) {
-			imagePanel?.hide();
-			textPanel?.showFor(textNode);
-			applyTextStylesToCanvas([textNode]);
-			return;
-		}
-
+		/* Prefer image panel whenever any photo is selected — audio/other
+		 * nodes in the same selection are ignored (e.g. MP3 + photos). */
 		if (imageNodes.length > 0) {
 			textPanel?.hide();
 			imagePanel?.showFor(imageNodes);
+			return;
+		}
+
+		if (textNode) {
+			imagePanel?.hide();
+			textPanel?.showFor(textNode);
+			applyTextStylesToCanvas([textNode]);
 			return;
 		}
 
@@ -2363,6 +2403,86 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			this.collageGapSaveTimer = 0;
 			void this.saveSettings();
 		}, 200);
+	}
+
+	/** Full-viewport slideshow for selected images (crossfade + Ken Burns). */
+	private startPhotoPresentation(leaf: WorkspaceLeaf) {
+		const id = (leaf as WorkspaceLeaf & { id?: string }).id ?? String(leaf);
+		const view = leaf.view as CanvasViewLike;
+		const selected = this.getSelectedImageNodes(view);
+		if (selected.length < 1) {
+			new Notice("Выдели хотя бы одну картинку", 1600);
+			return;
+		}
+
+		const ordered = sortNodesReadingOrder(
+			selected as unknown as CanvasNodeLike[],
+		) as unknown as ImageNodeLike[];
+		const slides: PresentationSlide[] = [];
+		for (const node of ordered) {
+			const src = this.resolveImageSlideSrc(node);
+			if (!src) continue;
+			const path =
+				node.file?.path ??
+				node.filePath ??
+				node.getData?.()?.file ??
+				"";
+			const label = path.includes("/")
+				? path.slice(path.lastIndexOf("/") + 1)
+				: path || undefined;
+			slides.push({ src, label });
+		}
+
+		if (slides.length === 0) {
+			new Notice("Не удалось прочитать изображения", 2000);
+			return;
+		}
+
+		const host =
+			view.containerEl.querySelector<HTMLElement>(".view-content") ??
+			view.containerEl;
+
+		let present = this.photoPresentations.get(id);
+		if (!present) {
+			present = new PhotoPresentation();
+			this.photoPresentations.set(id, present);
+		}
+
+		const ok = present.start(host, slides, {
+			intervalMs: 7000,
+			fadeMs: 1200,
+			kenBurns: true,
+			sparkles: this.settings.vibeSparkles,
+			/* Half of canvas vibe tilt; no cursor glare in slideshow. */
+			tiltStrength: Math.round(
+				this.clampVibeStrength(this.settings.vibeStrength) * 0.5,
+			),
+		});
+		if (!ok) {
+			new Notice("Не удалось запустить презентацию", 1600);
+			return;
+		}
+		new Notice(`Презентация: ${slides.length} фото · Esc — выход`, 2200);
+	}
+
+	private resolveImageSlideSrc(node: ImageNodeLike): string | null {
+		const img = node.nodeEl?.querySelector("img") as HTMLImageElement | null;
+		const fromDom = (img?.currentSrc || img?.src || "").trim();
+		if (fromDom && !fromDom.startsWith("data:")) return fromDom;
+
+		const path =
+			node.file?.path ??
+			node.filePath ??
+			(typeof node.getData?.()?.file === "string"
+				? node.getData()?.file
+				: undefined);
+		if (!path) return fromDom || null;
+
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (file instanceof TFile) {
+			return this.app.vault.getResourcePath(file);
+		}
+		return fromDom || null;
 	}
 
 	/** One-shot collage: tile masonry by columns, or justified rows. */

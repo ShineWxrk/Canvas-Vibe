@@ -44,6 +44,8 @@ export type ImageStylePanelCollageHooks = {
 	getCount: () => number;
 	onCountChange: (count: number) => void;
 	onArrange: () => void;
+	/** Start photo presentation for selected images (non-images ignored). */
+	onPresent: () => void;
 };
 
 export class ImageStylePanel {
@@ -60,6 +62,8 @@ export class ImageStylePanel {
 	private collageCount: HTMLInputElement;
 	private collageCountSlider: HTMLInputElement;
 	private collageHooks: ImageStylePanelCollageHooks | null = null;
+	private presentSection: HTMLElement;
+	private presentBtn: HTMLButtonElement;
 	private inputs: {
 		transparency: HTMLInputElement;
 		transparencyValue: HTMLElement;
@@ -452,6 +456,22 @@ export class ImageStylePanel {
 		});
 		arrangeBtn.addEventListener("click", () => this.collageHooks?.onArrange());
 
+		this.presentSection = body.createDiv({
+			cls: "intuition-panel__row intuition-panel__row--full intuition-panel__present",
+		});
+		this.presentBtn = this.presentSection.createEl("button", {
+			cls: "mod-cta intuition-panel__reset",
+			text: "Слайдшоу",
+			attr: {
+				title:
+					"Показать выбранные фото по очереди (аудио и прочее в выделении игнорируются)",
+			},
+		});
+		this.presentBtn.addEventListener("click", () =>
+			this.collageHooks?.onPresent(),
+		);
+		this.presentSection.hide();
+
 		const actions = body.createDiv({
 			cls: "intuition-panel__row intuition-panel__row--full intuition-panel__actions",
 		});
@@ -497,6 +517,7 @@ export class ImageStylePanel {
 	setCollageHooks(hooks: ImageStylePanelCollageHooks) {
 		this.collageHooks = hooks;
 		this.syncCollageControls();
+		this.syncPresentControls();
 	}
 
 	showFor(nodes: ImageNodeLike | ImageNodeLike[]) {
@@ -514,6 +535,7 @@ export class ImageStylePanel {
 		this.syncInputs();
 		this.syncPasteBtn();
 		this.syncCollageControls();
+		this.syncPresentControls();
 		this.el.show();
 	}
 
@@ -628,6 +650,12 @@ export class ImageStylePanel {
 		} else {
 			this.collageSection.hide();
 		}
+	}
+
+	private syncPresentControls() {
+		const show = this.nodes.length >= 1 && !!this.collageHooks?.onPresent;
+		if (show) this.presentSection.show();
+		else this.presentSection.hide();
 	}
 
 	private syncInputs() {

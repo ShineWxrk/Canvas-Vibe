@@ -50,6 +50,9 @@ export class VibeTiltController {
 	private onDown: ((e: PointerEvent) => void) | null = null;
 	private onUp: (() => void) | null = null;
 	private onLeave: (() => void) | null = null;
+	/** When true, don't toggle body/leaf vibe classes (presentation overlay). */
+	private isolateGlobalClass = false;
+	private glareEnabled = true;
 
 	attach(
 		root: HTMLElement,
@@ -58,6 +61,8 @@ export class VibeTiltController {
 			getSelectionCount: () => number;
 			getCards?: CardsProvider;
 			getZoom?: ZoomProvider;
+			isolateGlobalClass?: boolean;
+			glareEnabled?: boolean;
 		},
 	) {
 		this.root = root;
@@ -65,6 +70,8 @@ export class VibeTiltController {
 		this.getSelectionCount = opts.getSelectionCount;
 		if (opts.getCards) this.getCards = opts.getCards;
 		if (opts.getZoom) this.getZoom = opts.getZoom;
+		this.isolateGlobalClass = !!opts.isolateGlobalClass;
+		this.glareEnabled = opts.glareEnabled !== false;
 
 		if (root.getAttribute(HOOK_ATTR) === "1") return;
 		root.setAttribute(HOOK_ATTR, "1");
@@ -119,11 +126,15 @@ export class VibeTiltController {
 		this.enabled = on;
 		if (this.root) {
 			this.root.classList.toggle("intuition-canvas-vibe", on);
-			this.root
-				.closest(".workspace-leaf-content")
-				?.classList.toggle("intuition-canvas-vibe", on);
+			if (!this.isolateGlobalClass) {
+				this.root
+					.closest(".workspace-leaf-content")
+					?.classList.toggle("intuition-canvas-vibe", on);
+				document.body.classList.toggle("intuition-canvas-vibe", on);
+			}
+		} else if (!this.isolateGlobalClass) {
+			document.body.classList.toggle("intuition-canvas-vibe", on);
 		}
-		document.body.classList.toggle("intuition-canvas-vibe", on);
 		if (!on) this.clearAllEffects();
 	}
 
@@ -168,7 +179,13 @@ export class VibeTiltController {
 			this.root.classList.remove("intuition-canvas-vibe");
 		}
 		if (this.onUp) window.removeEventListener("pointerup", this.onUp);
-		document.body.classList.remove("intuition-canvas-vibe");
+		if (!this.isolateGlobalClass) {
+			document.body.classList.remove("intuition-canvas-vibe");
+			this.root
+				?.closest(".workspace-leaf-content")
+				?.classList.remove("intuition-canvas-vibe");
+		}
+		this.root?.classList.remove("intuition-canvas-vibe");
 		this.clearAllEffects();
 		this.root = null;
 		this.enabled = false;
@@ -316,13 +333,15 @@ export class VibeTiltController {
 			hit.container.style.transition = "none";
 			hit.container.style.transform = `perspective(900px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg)`;
 			hit.container.setAttribute(TILTING_ATTR, "1");
-			this.paintGlare(
-				hit.container,
-				hit.nx,
-				hit.ny,
-				hit.influence,
-				hit.cardStrength,
-			);
+			if (this.glareEnabled) {
+				this.paintGlare(
+					hit.container,
+					hit.nx,
+					hit.ny,
+					hit.influence,
+					hit.cardStrength,
+				);
+			}
 		}
 
 	}

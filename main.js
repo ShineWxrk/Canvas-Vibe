@@ -403,7 +403,7 @@ function isImageNode(node) {
   if (data?.type && data.type !== "file") return false;
   const path = node.file?.path ?? node.filePath ?? (typeof data?.file === "string" ? data.file : void 0);
   if (path) return IMAGE_EXT.test(path);
-  return !!node.nodeEl?.querySelector("img, .media-embed, .image-embed");
+  return !!node.nodeEl?.querySelector("img, .image-embed");
 }
 function readImageStyle(node) {
   const stored = node.getData?.()?.intuitionImage ?? {};
@@ -1344,6 +1344,21 @@ var ImageStylePanel = class {
       text: "\u0412 \u0441\u0435\u0442\u043A\u0443"
     });
     arrangeBtn.addEventListener("click", () => this.collageHooks?.onArrange());
+    this.presentSection = body.createDiv({
+      cls: "intuition-panel__row intuition-panel__row--full intuition-panel__present"
+    });
+    this.presentBtn = this.presentSection.createEl("button", {
+      cls: "mod-cta intuition-panel__reset",
+      text: "\u0421\u043B\u0430\u0439\u0434\u0448\u043E\u0443",
+      attr: {
+        title: "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0435 \u0444\u043E\u0442\u043E \u043F\u043E \u043E\u0447\u0435\u0440\u0435\u0434\u0438 (\u0430\u0443\u0434\u0438\u043E \u0438 \u043F\u0440\u043E\u0447\u0435\u0435 \u0432 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0438 \u0438\u0433\u043D\u043E\u0440\u0438\u0440\u0443\u044E\u0442\u0441\u044F)"
+      }
+    });
+    this.presentBtn.addEventListener(
+      "click",
+      () => this.collageHooks?.onPresent()
+    );
+    this.presentSection.hide();
     const actions = body.createDiv({
       cls: "intuition-panel__row intuition-panel__row--full intuition-panel__actions"
     });
@@ -1385,6 +1400,7 @@ var ImageStylePanel = class {
   setCollageHooks(hooks) {
     this.collageHooks = hooks;
     this.syncCollageControls();
+    this.syncPresentControls();
   }
   showFor(nodes) {
     const list = Array.isArray(nodes) ? nodes : [nodes];
@@ -1401,6 +1417,7 @@ var ImageStylePanel = class {
     this.syncInputs();
     this.syncPasteBtn();
     this.syncCollageControls();
+    this.syncPresentControls();
     this.el.show();
   }
   hide() {
@@ -1491,6 +1508,11 @@ var ImageStylePanel = class {
     } else {
       this.collageSection.hide();
     }
+  }
+  syncPresentControls() {
+    const show = this.nodes.length >= 1 && !!this.collageHooks?.onPresent;
+    if (show) this.presentSection.show();
+    else this.presentSection.hide();
   }
   syncInputs() {
     const transparency = toTransparency(this.style.opacity);
@@ -2559,6 +2581,9 @@ var VibeTiltController = class {
     this.onDown = null;
     this.onUp = null;
     this.onLeave = null;
+    /** When true, don't toggle body/leaf vibe classes (presentation overlay). */
+    this.isolateGlobalClass = false;
+    this.glareEnabled = true;
     /** Soft drop-shadow on the text content layer (not the card chrome). */
     this.textGlowFadeTimers = /* @__PURE__ */ new WeakMap();
   }
@@ -2568,6 +2593,8 @@ var VibeTiltController = class {
     this.getSelectionCount = opts.getSelectionCount;
     if (opts.getCards) this.getCards = opts.getCards;
     if (opts.getZoom) this.getZoom = opts.getZoom;
+    this.isolateGlobalClass = !!opts.isolateGlobalClass;
+    this.glareEnabled = opts.glareEnabled !== false;
     if (root.getAttribute(HOOK_ATTR) === "1") return;
     root.setAttribute(HOOK_ATTR, "1");
     this.onMove = (e) => {
@@ -2609,9 +2636,13 @@ var VibeTiltController = class {
     this.enabled = on;
     if (this.root) {
       this.root.classList.toggle("intuition-canvas-vibe", on);
-      this.root.closest(".workspace-leaf-content")?.classList.toggle("intuition-canvas-vibe", on);
+      if (!this.isolateGlobalClass) {
+        this.root.closest(".workspace-leaf-content")?.classList.toggle("intuition-canvas-vibe", on);
+        document.body.classList.toggle("intuition-canvas-vibe", on);
+      }
+    } else if (!this.isolateGlobalClass) {
+      document.body.classList.toggle("intuition-canvas-vibe", on);
     }
-    document.body.classList.toggle("intuition-canvas-vibe", on);
     if (!on) this.clearAllEffects();
   }
   /** strengthPercent: 0–100 — media tilt + glare */
@@ -2649,7 +2680,11 @@ var VibeTiltController = class {
       this.root.classList.remove("intuition-canvas-vibe");
     }
     if (this.onUp) window.removeEventListener("pointerup", this.onUp);
-    document.body.classList.remove("intuition-canvas-vibe");
+    if (!this.isolateGlobalClass) {
+      document.body.classList.remove("intuition-canvas-vibe");
+      this.root?.closest(".workspace-leaf-content")?.classList.remove("intuition-canvas-vibe");
+    }
+    this.root?.classList.remove("intuition-canvas-vibe");
     this.clearAllEffects();
     this.root = null;
     this.enabled = false;
@@ -2753,13 +2788,15 @@ var VibeTiltController = class {
       hit.container.style.transition = "none";
       hit.container.style.transform = `perspective(900px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg)`;
       hit.container.setAttribute(TILTING_ATTR, "1");
-      this.paintGlare(
-        hit.container,
-        hit.nx,
-        hit.ny,
-        hit.influence,
-        hit.cardStrength
-      );
+      if (this.glareEnabled) {
+        this.paintGlare(
+          hit.container,
+          hit.nx,
+          hit.ny,
+          hit.influence,
+          hit.cardStrength
+        );
+      }
     }
   }
   /** True only when pointer is over glyph hosts — not empty card padding. */
@@ -3037,6 +3074,9 @@ var VibeSparkleController = class {
     this.cardCache = [];
     this.cardCacheAt = 0;
     this.cardCacheMs = 400;
+    this.getCardsOverride = null;
+    /** When true, spawn around the host center as well as edges (presentation). */
+    this.spawnAroundCenter = false;
     this.onVisibility = () => {
       if (document.hidden) {
         this.stopSpawn();
@@ -3103,6 +3143,16 @@ var VibeSparkleController = class {
     }
     if (this.enabled) this.scheduleSpawn(50);
   }
+  /** Override canvas-node discovery (e.g. photo presentation frames). */
+  setCardHosts(fn) {
+    this.getCardsOverride = fn;
+    this.cardCache = [];
+    this.cardCacheAt = 0;
+  }
+  /** Bias spawns toward the host center (for presentation slideshow). */
+  setSpawnAroundCenter(on) {
+    this.spawnAroundCenter = !!on;
+  }
   /** @deprecated prefer setConfig */
   setIntensity(amount) {
     this.setConfig({ amount });
@@ -3159,6 +3209,9 @@ var VibeSparkleController = class {
   }
   viewportHost() {
     const root = this.root;
+    if (root.classList.contains("intuition-photo-presentation") || root.getAttribute("data-intuition-photo-presentation") === "1") {
+      return root;
+    }
     return root.closest(".workspace-leaf-content") ?? (root.classList.contains("canvas-wrapper") ? root : root.querySelector(".canvas-wrapper")) ?? root;
   }
   ensureCanvas() {
@@ -3300,6 +3353,13 @@ var VibeSparkleController = class {
       return this.cardCache;
     }
     if (!this.root) return [];
+    if (this.getCardsOverride) {
+      this.cardCache = this.getCardsOverride().filter(
+        (el) => el.isConnected && el.getBoundingClientRect().width >= 4
+      );
+      this.cardCacheAt = now;
+      return this.cardCache;
+    }
     const found = Array.from(this.root.querySelectorAll(CARD_SEL));
     if (!found.length) {
       const loose = this.root.querySelectorAll(".canvas-node");
@@ -3323,7 +3383,7 @@ var VibeSparkleController = class {
   }
   spawn(node, now = performance.now()) {
     if (this.particles.length >= this.effectiveMaxActive()) return;
-    const pos = this.randomNearEdge();
+    const pos = this.spawnAroundCenter ? this.randomAroundCenter() : this.randomNearEdge();
     const base = this.cfg.size;
     const size = base * (0.7 + Math.random() * 0.65);
     const life = this.cfg.lifetime;
@@ -3374,6 +3434,16 @@ var VibeSparkleController = class {
     return {
       x: 86 + Math.random() * (pad + 14),
       y: -pad + t * (100 + pad * 2)
+    };
+  }
+  /** Mostly edges; rare soft sparks toward the photo center. */
+  randomAroundCenter() {
+    if (Math.random() < 0.88) return this.randomNearEdge();
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 22 + Math.random() * 28;
+    return {
+      x: 50 + Math.cos(angle) * radius,
+      y: 50 + Math.sin(angle) * radius
     };
   }
   clearAll() {
@@ -3497,6 +3567,402 @@ var FpsOverlay = class {
   }
 };
 
+// photoPresentation.ts
+var ROOT_CLS = "intuition-photo-presentation";
+var ROOT_ATTR = "data-intuition-photo-presentation";
+var DEFAULTS = {
+  intervalMs: 7e3,
+  fadeMs: 1200,
+  kenBurns: true
+};
+var KEN_BURNS_VARIANTS = [
+  "intuition-kb-a",
+  "intuition-kb-b",
+  "intuition-kb-c",
+  "intuition-kb-d"
+];
+var PhotoPresentation = class {
+  constructor() {
+    this.root = null;
+    this.layerA = null;
+    this.layerB = null;
+    this.frameA = null;
+    this.frameB = null;
+    this.motionA = null;
+    this.motionB = null;
+    this.imgA = null;
+    this.imgB = null;
+    this.metaEl = null;
+    this.slides = [];
+    this.index = 0;
+    this.usingA = true;
+    this.timer = 0;
+    this.fadeMs = DEFAULTS.fadeMs;
+    this.intervalMs = DEFAULTS.intervalMs;
+    this.kenBurns = DEFAULTS.kenBurns;
+    this.onClose = null;
+    this.keyHandler = null;
+    this.closed = true;
+    this.auraGen = 0;
+    this.sparkles = null;
+    this.tilt = null;
+    this.sparkleAnchor = null;
+    this.hostEl = null;
+    this.kbClearTimer = 0;
+  }
+  isActive() {
+    return !this.closed && !!this.root;
+  }
+  start(host, slides, options = {}) {
+    const clean = slides.filter((s) => !!s.src);
+    if (clean.length === 0) return false;
+    this.stop();
+    this.closed = false;
+    this.slides = clean;
+    this.index = 0;
+    this.usingA = true;
+    this.intervalMs = Math.max(
+      1500,
+      options.intervalMs ?? DEFAULTS.intervalMs
+    );
+    this.fadeMs = Math.max(200, options.fadeMs ?? DEFAULTS.fadeMs);
+    this.kenBurns = options.kenBurns ?? DEFAULTS.kenBurns;
+    this.onClose = options.onClose ?? null;
+    const root = document.createElement("div");
+    root.className = ROOT_CLS;
+    root.setAttribute(ROOT_ATTR, "1");
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-modal", "true");
+    root.setAttribute("aria-label", "Photo presentation");
+    root.style.setProperty("--intuition-present-fade", `${this.fadeMs}ms`);
+    root.style.setProperty(
+      "--intuition-present-hold",
+      `${this.intervalMs}ms`
+    );
+    const stage = document.createElement("div");
+    stage.className = `${ROOT_CLS}__stage`;
+    const makeLayer = (name) => {
+      const layer = document.createElement("div");
+      layer.className = `${ROOT_CLS}__layer ${ROOT_CLS}__layer--${name}`;
+      const frame = document.createElement("div");
+      frame.className = `${ROOT_CLS}__frame`;
+      const motion = document.createElement("div");
+      motion.className = `${ROOT_CLS}__motion`;
+      const photo = document.createElement("div");
+      photo.className = `${ROOT_CLS}__photo`;
+      const img = document.createElement("img");
+      img.className = `${ROOT_CLS}__img`;
+      img.draggable = false;
+      img.alt = "";
+      photo.appendChild(img);
+      motion.appendChild(photo);
+      frame.appendChild(motion);
+      layer.appendChild(frame);
+      stage.appendChild(layer);
+      return { layer, frame, motion, img };
+    };
+    const a = makeLayer("a");
+    const b = makeLayer("b");
+    this.layerA = a.layer;
+    this.layerB = b.layer;
+    this.frameA = a.frame;
+    this.frameB = b.frame;
+    this.motionA = a.motion;
+    this.motionB = b.motion;
+    this.imgA = a.img;
+    this.imgB = b.img;
+    const sparkleAnchor = document.createElement("div");
+    sparkleAnchor.className = `${ROOT_CLS}__sparkle-anchor`;
+    sparkleAnchor.setAttribute("aria-hidden", "true");
+    stage.appendChild(sparkleAnchor);
+    this.sparkleAnchor = sparkleAnchor;
+    const chrome = document.createElement("div");
+    chrome.className = `${ROOT_CLS}__chrome`;
+    const meta = document.createElement("div");
+    meta.className = `${ROOT_CLS}__meta`;
+    this.metaEl = meta;
+    const hint = document.createElement("div");
+    hint.className = `${ROOT_CLS}__hint`;
+    hint.textContent = "\u2190 \u2192  \xB7  Space  \xB7  Esc";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = `${ROOT_CLS}__close`;
+    closeBtn.setAttribute("aria-label", "Close presentation");
+    closeBtn.textContent = "\u2715";
+    closeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this.stop();
+    });
+    chrome.appendChild(meta);
+    chrome.appendChild(hint);
+    chrome.appendChild(closeBtn);
+    root.appendChild(stage);
+    root.appendChild(chrome);
+    root.addEventListener("click", (ev) => {
+      if (ev.target !== root && ev.target !== stage) return;
+      const rect = root.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      if (x < rect.width * 0.33) this.prev();
+      else if (x > rect.width * 0.66) this.next(true);
+    });
+    host.appendChild(root);
+    this.root = root;
+    this.hostEl = host;
+    host.classList.add("intuition-photo-presentation-active");
+    this.sparkles = new VibeSparkleController();
+    this.sparkles.attach(root, {
+      getSuspended: () => false,
+      getSelectionCount: () => 0,
+      getZoom: () => 1
+    });
+    this.sparkles.setCardHosts(
+      () => this.sparkleAnchor?.isConnected ? [this.sparkleAnchor] : []
+    );
+    this.sparkles.setSpawnAroundCenter(true);
+    const sparkleBase = normalizeSparkleConfig(
+      options.sparkles ?? DEFAULT_SPARKLE_CONFIG
+    );
+    this.sparkles.setConfig({
+      ...sparkleBase,
+      amount: Math.min(500, Math.round(sparkleBase.amount * 2.4)),
+      frequency: Math.min(200, Math.round(sparkleBase.frequency * 2)),
+      size: Math.min(48, Math.round(sparkleBase.size * 1.2)),
+      opacity: Math.min(100, Math.round(sparkleBase.opacity * 1.05))
+    });
+    this.sparkles.setEnabled(true);
+    this.tilt = new VibeTiltController();
+    this.tilt.attach(root, {
+      getSuspended: () => false,
+      getSelectionCount: () => 0,
+      getCards: () => this.activeTiltCards(),
+      getZoom: () => 1,
+      isolateGlobalClass: true,
+      glareEnabled: false
+    });
+    this.tilt.setStrength(
+      typeof options.tiltStrength === "number" && Number.isFinite(options.tiltStrength) ? options.tiltStrength : 50
+    );
+    this.tilt.setEnabled(true);
+    this.keyHandler = (ev) => {
+      if (this.closed) return;
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        this.stop();
+        return;
+      }
+      if (ev.key === "ArrowRight" || ev.key === " " || ev.key === "Spacebar") {
+        ev.preventDefault();
+        this.next(true);
+        return;
+      }
+      if (ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        this.prev();
+      }
+    };
+    window.addEventListener("keydown", this.keyHandler, true);
+    this.showIndex(0, false);
+    this.scheduleAdvance();
+    return true;
+  }
+  stop() {
+    this.auraGen += 1;
+    if (this.timer) {
+      window.clearTimeout(this.timer);
+      this.timer = 0;
+    }
+    if (this.kbClearTimer) {
+      window.clearTimeout(this.kbClearTimer);
+      this.kbClearTimer = 0;
+    }
+    if (this.keyHandler) {
+      window.removeEventListener("keydown", this.keyHandler, true);
+      this.keyHandler = null;
+    }
+    if (this.frameA) removeAuraLayer(this.frameA);
+    if (this.frameB) removeAuraLayer(this.frameB);
+    if (this.motionA) removeAuraLayer(this.motionA);
+    if (this.motionB) removeAuraLayer(this.motionB);
+    this.sparkles?.destroy();
+    this.sparkles = null;
+    this.tilt?.destroy();
+    this.tilt = null;
+    this.sparkleAnchor = null;
+    this.hostEl?.classList.remove("intuition-photo-presentation-active");
+    this.hostEl = null;
+    const wasOpen = !this.closed;
+    this.closed = true;
+    this.root?.remove();
+    this.root = null;
+    this.layerA = null;
+    this.layerB = null;
+    this.frameA = null;
+    this.frameB = null;
+    this.motionA = null;
+    this.motionB = null;
+    this.imgA = null;
+    this.imgB = null;
+    this.metaEl = null;
+    this.slides = [];
+    if (wasOpen && this.onClose) {
+      const cb = this.onClose;
+      this.onClose = null;
+      cb();
+    } else {
+      this.onClose = null;
+    }
+  }
+  destroy() {
+    this.stop();
+  }
+  scheduleAdvance() {
+    if (this.timer) window.clearTimeout(this.timer);
+    if (this.closed || this.slides.length <= 1) return;
+    this.timer = window.setTimeout(() => {
+      this.timer = 0;
+      this.next(false);
+    }, this.intervalMs + this.fadeMs);
+  }
+  next(manual) {
+    if (this.closed || this.slides.length === 0) return;
+    const next = (this.index + 1) % this.slides.length;
+    this.showIndex(next, true);
+    if (manual || this.slides.length > 1) this.scheduleAdvance();
+  }
+  prev() {
+    if (this.closed || this.slides.length === 0) return;
+    const prev = (this.index - 1 + this.slides.length) % this.slides.length;
+    this.showIndex(prev, true);
+    this.scheduleAdvance();
+  }
+  showIndex(index, animate) {
+    const slide = this.slides[index];
+    if (!slide || !this.imgA || !this.imgB || !this.layerA || !this.layerB || !this.motionA || !this.motionB) {
+      return;
+    }
+    if (this.kbClearTimer) {
+      window.clearTimeout(this.kbClearTimer);
+      this.kbClearTimer = 0;
+    }
+    if (!animate) {
+      this.clearKenBurns(this.layerA);
+      this.clearKenBurns(this.layerB);
+      this.imgA.src = slide.src;
+      this.imgA.alt = slide.label ?? "";
+      this.layerA.style.opacity = "1";
+      this.layerB.style.opacity = "0";
+      this.layerA.classList.add(`${ROOT_CLS}__layer--in`);
+      this.layerA.classList.remove(`${ROOT_CLS}__layer--out`);
+      this.layerB.classList.add(`${ROOT_CLS}__layer--out`);
+      this.layerB.classList.remove(`${ROOT_CLS}__layer--in`);
+      if (this.kenBurns) {
+        this.applyKenBurns(this.layerA, this.motionA, index);
+      }
+      void this.refreshAura(this.motionA, this.imgA, slide.src);
+      this.usingA = true;
+    } else {
+      const incomingImg = this.usingA ? this.imgB : this.imgA;
+      const incomingLayer = this.usingA ? this.layerB : this.layerA;
+      const incomingMotion = this.usingA ? this.motionB : this.motionA;
+      const outgoingLayer = this.usingA ? this.layerA : this.layerB;
+      this.freezeKenBurns(outgoingLayer);
+      this.clearKenBurns(incomingLayer);
+      incomingImg.src = slide.src;
+      incomingImg.alt = slide.label ?? "";
+      incomingLayer.classList.add(`${ROOT_CLS}__layer--in`);
+      incomingLayer.classList.remove(`${ROOT_CLS}__layer--out`);
+      outgoingLayer.classList.add(`${ROOT_CLS}__layer--out`);
+      outgoingLayer.classList.remove(`${ROOT_CLS}__layer--in`);
+      incomingLayer.style.opacity = "1";
+      outgoingLayer.style.opacity = "0";
+      if (this.kenBurns) {
+        this.applyKenBurns(incomingLayer, incomingMotion, index);
+      }
+      void this.refreshAura(incomingMotion, incomingImg, slide.src);
+      this.usingA = !this.usingA;
+      this.kbClearTimer = window.setTimeout(() => {
+        this.kbClearTimer = 0;
+        if (this.closed) return;
+        this.clearKenBurns(outgoingLayer);
+      }, this.fadeMs + 40);
+    }
+    this.index = index;
+    if (this.metaEl) {
+      const label = slide.label ? ` \xB7 ${slide.label}` : "";
+      this.metaEl.textContent = `${index + 1} / ${this.slides.length}${label}`;
+    }
+  }
+  activeTiltCards() {
+    const cards = [];
+    for (const layer of [this.layerA, this.layerB]) {
+      if (!layer?.isConnected) continue;
+      if (!layer.classList.contains(`${ROOT_CLS}__layer--in`)) continue;
+      if (Number.parseFloat(getComputedStyle(layer).opacity || "0") < 0.12) {
+        continue;
+      }
+      const photo = layer.querySelector(`.${ROOT_CLS}__photo`);
+      if (photo instanceof HTMLElement) {
+        cards.push({ el: photo, kind: "media" });
+      }
+    }
+    return cards;
+  }
+  async refreshAura(host, img, seed) {
+    const gen = ++this.auraGen;
+    try {
+      await waitForImage(img);
+      if (this.closed || gen !== this.auraGen) return;
+      const palette = extractPalette(img);
+      paintAuraLayer(host, {
+        color: palette?.[0] ?? "#7a6bb5",
+        palette: palette ?? void 0,
+        strength: 42,
+        size: 88,
+        seed,
+        shimmer: true
+      });
+    } catch {
+      if (this.closed || gen !== this.auraGen) return;
+      paintAuraLayer(host, {
+        color: "#7a6bb5",
+        strength: 36,
+        size: 84,
+        seed,
+        shimmer: true
+      });
+    }
+  }
+  applyKenBurns(layer, motion, index) {
+    const variant = KEN_BURNS_VARIANTS[index % KEN_BURNS_VARIANTS.length];
+    const dur = this.intervalMs + this.fadeMs + 80;
+    motion.style.transform = "";
+    motion.style.animationName = "";
+    layer.classList.add(variant);
+    motion.style.animationDuration = `${dur}ms`;
+  }
+  /** Keep the current scale while fading out — avoids a snap shrink. */
+  freezeKenBurns(layer) {
+    const motion = layer.querySelector(`.${ROOT_CLS}__motion`);
+    if (!(motion instanceof HTMLElement)) return;
+    const computed = getComputedStyle(motion).transform;
+    for (const v of KEN_BURNS_VARIANTS) layer.classList.remove(v);
+    motion.style.animationName = "none";
+    motion.style.animationDuration = "";
+    if (computed && computed !== "none") {
+      motion.style.transform = computed;
+    }
+  }
+  clearKenBurns(layer) {
+    for (const v of KEN_BURNS_VARIANTS) layer.classList.remove(v);
+    const motion = layer.querySelector(`.${ROOT_CLS}__motion`);
+    if (motion instanceof HTMLElement) {
+      motion.style.animationDuration = "";
+      motion.style.animationName = "";
+      motion.style.transform = "";
+    }
+  }
+};
+
 // main.ts
 var CANVAS_VIEW_TYPE = "canvas";
 var BUTTON_ATTR = "data-intuition-canvas-labels-toggle";
@@ -3566,6 +4032,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.collagePanels = /* @__PURE__ */ new Map();
     this.canvasPanels = /* @__PURE__ */ new Map();
     this.fpsOverlays = /* @__PURE__ */ new Map();
+    this.photoPresentations = /* @__PURE__ */ new Map();
     this.vibeStrengthSaveTimer = 0;
     this.chromeSaveTimer = 0;
     this.collageGapSaveTimer = 0;
@@ -3652,6 +4119,33 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
         return true;
       }
     });
+    this.addCommand({
+      id: "present-selected-images",
+      name: "Present selected images (slideshow)",
+      checkCallback: (checking) => {
+        const leaf = this.getActiveCanvasLeaf();
+        if (!leaf) return false;
+        const images = this.getSelectedImageNodes(
+          leaf.view
+        );
+        if (checking) return images.length >= 1;
+        this.startPhotoPresentation(leaf);
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "stop-photo-presentation",
+      name: "Stop photo presentation",
+      checkCallback: (checking) => {
+        const leaf = this.getActiveCanvasLeaf();
+        if (!leaf) return false;
+        const id = leaf.id ?? String(leaf);
+        const active = this.photoPresentations.get(id)?.isActive();
+        if (checking) return !!active;
+        this.photoPresentations.get(id)?.stop();
+        return true;
+      }
+    });
   }
   onunload() {
     this.clearObservers();
@@ -3671,6 +4165,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.canvasPanels.clear();
     for (const fps of this.fpsOverlays.values()) fps.destroy();
     this.fpsOverlays.clear();
+    for (const present of this.photoPresentations.values()) present.destroy();
+    this.photoPresentations.clear();
     if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
     if (this.chromeSaveTimer) window.clearTimeout(this.chromeSaveTimer);
     if (this.collageGapSaveTimer) window.clearTimeout(this.collageGapSaveTimer);
@@ -3690,6 +4186,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     document.querySelectorAll(".intuition-canvas-chrome").forEach((el) => clearCanvasChrome(el));
     document.querySelectorAll(`[${CHROME_BTN_ATTR}]`).forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-canvas-panel]").forEach((el) => el.remove());
+    document.querySelectorAll("[data-intuition-photo-presentation]").forEach((el) => el.remove());
     document.getElementById("intuition-canvas-label-style")?.remove();
     document.body.classList.remove(HIDE_CLASS);
     document.body.classList.remove(HIDE_AURAS_CLASS);
@@ -4911,7 +5408,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
         this.queueCollageSettingsSave();
         this.syncAllCollageButtons();
       },
-      onArrange: () => this.arrangeSelectedImagesCollage(view)
+      onArrange: () => this.arrangeSelectedImagesCollage(view),
+      onPresent: () => this.startPhotoPresentation(leaf)
     });
     this.imagePanels.set(id, panel);
   }
@@ -5006,15 +5504,15 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const view = leaf.view;
     const textNode = this.getSelectedTextNode(view);
     const imageNodes = this.getSelectedImageNodes(view);
-    if (textNode && imageNodes.length === 0) {
-      imagePanel?.hide();
-      textPanel?.showFor(textNode);
-      applyTextStylesToCanvas([textNode]);
-      return;
-    }
     if (imageNodes.length > 0) {
       textPanel?.hide();
       imagePanel?.showFor(imageNodes);
+      return;
+    }
+    if (textNode) {
+      imagePanel?.hide();
+      textPanel?.showFor(textNode);
+      applyTextStylesToCanvas([textNode]);
       return;
     }
     textPanel?.hide();
@@ -5308,6 +5806,64 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       this.collageGapSaveTimer = 0;
       void this.saveSettings();
     }, 200);
+  }
+  /** Full-viewport slideshow for selected images (crossfade + Ken Burns). */
+  startPhotoPresentation(leaf) {
+    const id = leaf.id ?? String(leaf);
+    const view = leaf.view;
+    const selected = this.getSelectedImageNodes(view);
+    if (selected.length < 1) {
+      new import_obsidian4.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B \u043E\u0434\u043D\u0443 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1600);
+      return;
+    }
+    const ordered = sortNodesReadingOrder(
+      selected
+    );
+    const slides = [];
+    for (const node of ordered) {
+      const src = this.resolveImageSlideSrc(node);
+      if (!src) continue;
+      const path = node.file?.path ?? node.filePath ?? node.getData?.()?.file ?? "";
+      const label = path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path || void 0;
+      slides.push({ src, label });
+    }
+    if (slides.length === 0) {
+      new import_obsidian4.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
+      return;
+    }
+    const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
+    let present = this.photoPresentations.get(id);
+    if (!present) {
+      present = new PhotoPresentation();
+      this.photoPresentations.set(id, present);
+    }
+    const ok = present.start(host, slides, {
+      intervalMs: 7e3,
+      fadeMs: 1200,
+      kenBurns: true,
+      sparkles: this.settings.vibeSparkles,
+      /* Half of canvas vibe tilt; no cursor glare in slideshow. */
+      tiltStrength: Math.round(
+        this.clampVibeStrength(this.settings.vibeStrength) * 0.5
+      )
+    });
+    if (!ok) {
+      new import_obsidian4.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u043F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044E", 1600);
+      return;
+    }
+    new import_obsidian4.Notice(`\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F: ${slides.length} \u0444\u043E\u0442\u043E \xB7 Esc \u2014 \u0432\u044B\u0445\u043E\u0434`, 2200);
+  }
+  resolveImageSlideSrc(node) {
+    const img = node.nodeEl?.querySelector("img");
+    const fromDom = (img?.currentSrc || img?.src || "").trim();
+    if (fromDom && !fromDom.startsWith("data:")) return fromDom;
+    const path = node.file?.path ?? node.filePath ?? (typeof node.getData?.()?.file === "string" ? node.getData()?.file : void 0);
+    if (!path) return fromDom || null;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof import_obsidian4.TFile) {
+      return this.app.vault.getResourcePath(file);
+    }
+    return fromDom || null;
   }
   /** One-shot collage: tile masonry by columns, or justified rows. */
   arrangeSelectedImagesCollage(view) {

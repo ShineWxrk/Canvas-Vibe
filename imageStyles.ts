@@ -105,7 +105,8 @@ export function isImageNode(node: ImageNodeLike): boolean {
 		(typeof data?.file === "string" ? data.file : undefined);
 
 	if (path) return IMAGE_EXT.test(path);
-	return !!node.nodeEl?.querySelector("img, .media-embed, .image-embed");
+	/* .media-embed also wraps audio/video — only treat real images as photos. */
+	return !!node.nodeEl?.querySelector("img, .image-embed");
 }
 
 export function readImageStyle(node: ImageNodeLike): IntuitionImageStyle {

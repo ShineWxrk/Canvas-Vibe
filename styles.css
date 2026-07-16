@@ -730,6 +730,14 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
 }
 
+.intuition-panel__present {
+	margin-top: 4px;
+}
+
+.intuition-panel__present .intuition-panel__reset {
+	width: 100%;
+}
+
 .intuition-panel__collage-fixed {
 	display: flex;
 	flex-direction: column;
@@ -1126,6 +1134,17 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	.intuition-image-aura__blob {
 		animation: none !important;
 	}
+
+	.intuition-photo-presentation__img,
+	.intuition-photo-presentation__frame,
+	.intuition-photo-presentation__motion {
+		animation: none !important;
+		transform: none !important;
+	}
+
+	.intuition-photo-presentation__layer {
+		transition: none !important;
+	}
 }
 
 .canvas-card-menu-button[data-intuition-canvas-add-text] {
@@ -1136,6 +1155,269 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	color: var(--text-normal);
 }
 
-.canvas-card-menu-button[data-intuition-canvas-add-text]:hover {
-	color: var(--text-normal);
+/* —— Photo presentation (slideshow + Ken Burns) —— */
+.intuition-photo-presentation-active .intuition-image-panel,
+.intuition-photo-presentation-active .intuition-text-panel,
+.intuition-photo-presentation-active .intuition-vibe-panel,
+.intuition-photo-presentation-active .intuition-collage-panel {
+	display: none !important;
+}
+
+.intuition-photo-presentation {
+	position: absolute;
+	inset: 0;
+	z-index: 80;
+	display: grid;
+	place-items: stretch;
+	background: #0a0a0b;
+	color: #f2f2f0;
+	user-select: none;
+	overflow: hidden;
+	overscroll-behavior: none;
+	contain: layout paint;
+	--intuition-present-fade: 1200ms;
+}
+
+.intuition-photo-presentation__stage {
+	position: relative;
+	overflow: hidden;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+}
+
+.intuition-photo-presentation__layer {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	/* Leave margin so photos fit by H/W without filling the whole viewport. */
+	padding: clamp(28px, 7%, 72px) clamp(28px, 8%, 96px);
+	box-sizing: border-box;
+	/* Visible so auras aren't clipped; stage still has overflow:hidden. */
+	overflow: visible;
+	opacity: 0;
+	transition: opacity var(--intuition-present-fade) ease;
+	pointer-events: none;
+	min-width: 0;
+	min-height: 0;
+}
+
+.intuition-photo-presentation__layer--in {
+	opacity: 1;
+}
+
+.intuition-photo-presentation__layer--out {
+	opacity: 0;
+}
+
+/* Stable frame — overflow visible so auras can bloom past the photo. */
+.intuition-photo-presentation__frame {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 100%;
+	max-width: 100%;
+	max-height: 100%;
+	min-width: 0;
+	min-height: 0;
+	overflow: visible;
+	z-index: 0;
+}
+
+.intuition-photo-presentation__motion {
+	position: relative;
+	/* Definite box (% of frame) so img max-height:100% actually resolves.
+	 * Headroom (~86%) keeps Ken Burns from clipping the photo itself. */
+	width: 86%;
+	height: 86%;
+	max-width: 86%;
+	max-height: 86%;
+	flex: 0 0 auto;
+	overflow: visible;
+	transform-origin: center center;
+	will-change: transform;
+}
+
+/* Fixed sparkle field — same box as photos, not tied to the active slide. */
+.intuition-photo-presentation__sparkle-anchor {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	/* Match photo safe area so edge spawns frame the image. */
+	width: 86%;
+	height: 86%;
+	transform: translate(-50%, -50%);
+	pointer-events: none;
+	z-index: 2;
+}
+
+.intuition-photo-presentation__photo {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	border-radius: 18px;
+	line-height: 0;
+	transform-origin: center center;
+	will-change: transform;
+}
+
+.intuition-photo-presentation .intuition-vibe-glare {
+	border-radius: 18px;
+}
+
+.intuition-photo-presentation__img {
+	display: block;
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
+	object-fit: contain;
+	object-position: center center;
+	border-radius: 18px;
+}
+
+.intuition-photo-presentation .intuition-vibe-sparkles-canvas {
+	z-index: 3;
+	/* Stay visible even when canvas is in far-zoom lite mode. */
+	visibility: visible !important;
+	opacity: 1 !important;
+}
+
+/* Keep presentation auras even if canvas auras are toggled off. */
+body.intuition-canvas-hide-auras
+	.intuition-photo-presentation
+	.intuition-image-aura,
+.workspace-leaf-content[data-type="canvas"].intuition-canvas-hide-auras
+	.intuition-photo-presentation
+	.intuition-image-aura,
+.canvas.intuition-canvas-hide-auras
+	.intuition-photo-presentation
+	.intuition-image-aura {
+	display: block !important;
+	visibility: visible !important;
+	opacity: var(--intuition-aura-strength, 0.5) !important;
+	pointer-events: none !important;
+	animation: intuition-aura-breathe var(--intuition-aura-duration, 5.5s)
+		ease-in-out infinite !important;
+}
+
+.intuition-kb-a .intuition-photo-presentation__motion {
+	animation-name: intuition-kb-a;
+	animation-timing-function: linear;
+	animation-fill-mode: forwards;
+}
+
+.intuition-kb-b .intuition-photo-presentation__motion {
+	animation-name: intuition-kb-b;
+	animation-timing-function: linear;
+	animation-fill-mode: forwards;
+}
+
+.intuition-kb-c .intuition-photo-presentation__motion {
+	animation-name: intuition-kb-c;
+	animation-timing-function: linear;
+	animation-fill-mode: forwards;
+}
+
+.intuition-kb-d .intuition-photo-presentation__motion {
+	animation-name: intuition-kb-d;
+	animation-timing-function: linear;
+	animation-fill-mode: forwards;
+}
+
+@keyframes intuition-kb-a {
+	from {
+		transform: scale(1.04) translate(0%, 0%);
+	}
+	to {
+		transform: scale(1.14) translate(-2.5%, -1.5%);
+	}
+}
+
+@keyframes intuition-kb-b {
+	from {
+		transform: scale(1.12) translate(-2%, 1%);
+	}
+	to {
+		transform: scale(1.04) translate(1.5%, -1%);
+	}
+}
+
+@keyframes intuition-kb-c {
+	from {
+		transform: scale(1.05) translate(1.5%, -1%);
+	}
+	to {
+		transform: scale(1.13) translate(-1%, 2%);
+	}
+}
+
+@keyframes intuition-kb-d {
+	from {
+		transform: scale(1.1) translate(0%, 1.5%);
+	}
+	to {
+		transform: scale(1.04) translate(-2%, -1%);
+	}
+}
+
+.intuition-photo-presentation__chrome {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 4;
+}
+
+.intuition-photo-presentation__meta {
+	position: absolute;
+	left: 18px;
+	bottom: 16px;
+	font-size: 12px;
+	letter-spacing: 0.04em;
+	opacity: 0.72;
+	text-shadow: 0 1px 8px rgba(0, 0, 0, 0.65);
+	max-width: min(70vw, 520px);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.intuition-photo-presentation__hint {
+	position: absolute;
+	left: 50%;
+	bottom: 16px;
+	transform: translateX(-50%);
+	font-size: 11px;
+	letter-spacing: 0.08em;
+	opacity: 0.45;
+	text-shadow: 0 1px 8px rgba(0, 0, 0, 0.65);
+}
+
+.intuition-photo-presentation__close {
+	pointer-events: auto;
+	position: absolute;
+	top: 14px;
+	right: 14px;
+	width: 36px;
+	height: 36px;
+	border: none;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.1);
+	color: #f2f2f0;
+	font-size: 16px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.intuition-photo-presentation__close:hover {
+	background: rgba(255, 255, 255, 0.18);
 }

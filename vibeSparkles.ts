@@ -132,6 +132,9 @@ export class VibeSparkleController {
 	private cardCache: HTMLElement[] = [];
 	private cardCacheAt = 0;
 	private readonly cardCacheMs = 400;
+	private getCardsOverride: (() => HTMLElement[]) | null = null;
+	/** When true, spawn around the host center as well as edges (presentation). */
+	private spawnAroundCenter = false;
 
 	private onVisibility = () => {
 		if (document.hidden) {
@@ -216,6 +219,18 @@ export class VibeSparkleController {
 		if (this.enabled) this.scheduleSpawn(50);
 	}
 
+	/** Override canvas-node discovery (e.g. photo presentation frames). */
+	setCardHosts(fn: (() => HTMLElement[]) | null) {
+		this.getCardsOverride = fn;
+		this.cardCache = [];
+		this.cardCacheAt = 0;
+	}
+
+	/** Bias spawns toward the host center (for presentation slideshow). */
+	setSpawnAroundCenter(on: boolean) {
+		this.spawnAroundCenter = !!on;
+	}
+
 	/** @deprecated prefer setConfig */
 	setIntensity(amount: number) {
 		this.setConfig({ amount });
@@ -280,6 +295,13 @@ export class VibeSparkleController {
 
 	private viewportHost(): HTMLElement {
 		const root = this.root!;
+		/* Presentation overlay owns its own coordinate space. */
+		if (
+			root.classList.contains("intuition-photo-presentation") ||
+			root.getAttribute("data-intuition-photo-presentation") === "1"
+		) {
+			return root;
+		}
 		return (
 			(root.closest(".workspace-leaf-content") as HTMLElement | null) ??
 			(root.classList.contains("canvas-wrapper")
@@ -461,6 +483,15 @@ export class VibeSparkleController {
 			return this.cardCache;
 		}
 		if (!this.root) return [];
+
+		if (this.getCardsOverride) {
+			this.cardCache = this.getCardsOverride().filter(
+				(el) => el.isConnected && el.getBoundingClientRect().width >= 4,
+			);
+			this.cardCacheAt = now;
+			return this.cardCache;
+		}
+
 		const found = Array.from(this.root.querySelectorAll<HTMLElement>(CARD_SEL));
 		if (!found.length) {
 			const loose = this.root.querySelectorAll<HTMLElement>(".canvas-node");
@@ -496,7 +527,9 @@ export class VibeSparkleController {
 	private spawn(node: HTMLElement, now = performance.now()) {
 		if (this.particles.length >= this.effectiveMaxActive()) return;
 
-		const pos = this.randomNearEdge();
+		const pos = this.spawnAroundCenter
+			? this.randomAroundCenter()
+			: this.randomNearEdge();
 		const base = this.cfg.size;
 		const size = base * (0.7 + Math.random() * 0.65);
 		const life = this.cfg.lifetime;
@@ -552,6 +585,19 @@ export class VibeSparkleController {
 		return {
 			x: 86 + Math.random() * (pad + 14),
 			y: -pad + t * (100 + pad * 2),
+		};
+	}
+
+	/** Mostly edges; rare soft sparks toward the photo center. */
+	private randomAroundCenter(): { x: number; y: number } {
+		/* ~88% stay on the rim — denser edge field like canvas vibe. */
+		if (Math.random() < 0.88) return this.randomNearEdge();
+		const angle = Math.random() * Math.PI * 2;
+		/* Sparse inward: keep away from dead-center, still inside the frame. */
+		const radius = 22 + Math.random() * 28;
+		return {
+			x: 50 + Math.cos(angle) * radius,
+			y: 50 + Math.sin(angle) * radius,
 		};
 	}
 
