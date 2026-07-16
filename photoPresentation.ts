@@ -1,4 +1,4 @@
-/** Full-viewport photo presentation: crossfade + Ken Burns + image auras. */
+/** Full-viewport photo presentation: transitions, Ken Burns, auras, sparkles. */
 
 import {
 	extractPalette,
@@ -6,6 +6,13 @@ import {
 	removeAuraLayer,
 	waitForImage,
 } from "./imageAura";
+import {
+	DEFAULT_PRESENTATION_SETTINGS,
+	normalizePresentationSettings,
+	normalizePresentationTransition,
+	type PresentationSettings,
+	type PresentationTransition,
+} from "./presentationSettings";
 import {
 	DEFAULT_SPARKLE_CONFIG,
 	normalizeSparkleConfig,
@@ -23,30 +30,25 @@ export interface PresentationSlide {
 }
 
 export interface PresentationOptions {
-	/** Time each slide is fully visible before fading out (ms). */
-	intervalMs?: number;
-	/** Crossfade duration (ms). */
-	fadeMs?: number;
-	/** Slow zoom/pan on the active slide. */
-	kenBurns?: boolean;
-	/** Sparkle settings (defaults to plugin vibe sparkles). */
-	sparkles?: Partial<VibeSparkleConfig> | null;
-	/** Media tilt strength 0–100 (same as vibe tilt). */
+	settings?: Partial<PresentationSettings>;
+	/** Sparkle base config from plugin vibe settings. */
+	sparklesConfig?: Partial<VibeSparkleConfig> | null;
+	/** Media tilt strength 0–100 (already halved by caller if desired). */
 	tiltStrength?: number;
 	onClose?: () => void;
 }
-
-const DEFAULTS = {
-	intervalMs: 7000 as number,
-	fadeMs: 1200 as number,
-	kenBurns: true as boolean,
-};
 
 const KEN_BURNS_VARIANTS = [
 	"intuition-kb-a",
 	"intuition-kb-b",
 	"intuition-kb-c",
 	"intuition-kb-d",
+] as const;
+
+const TX_CLASSES = [
+	`${ROOT_CLS}__layer--tx-prep`,
+	`${ROOT_CLS}__layer--tx-zoom-out`,
+	`${ROOT_CLS}__layer--tx-slide-out`,
 ] as const;
 
 export class PhotoPresentation {
@@ -64,9 +66,13 @@ export class PhotoPresentation {
 	private index = 0;
 	private usingA = true;
 	private timer = 0;
-	private fadeMs = DEFAULTS.fadeMs;
-	private intervalMs = DEFAULTS.intervalMs;
-	private kenBurns = DEFAULTS.kenBurns;
+	private fadeMs = DEFAULT_PRESENTATION_SETTINGS.fadeMs;
+	private intervalMs = DEFAULT_PRESENTATION_SETTINGS.intervalSec * 1000;
+	private kenBurnsStrength = DEFAULT_PRESENTATION_SETTINGS.kenBurnsStrength;
+	private aurasEnabled = true;
+	private sparklesEnabled = true;
+	private paletteBg = true;
+	private transition: PresentationTransition = "dissolve";
 	private onClose: (() => void) | null = null;
 	private keyHandler: ((ev: KeyboardEvent) => void) | null = null;
 	private closed = true;
@@ -76,6 +82,8 @@ export class PhotoPresentation {
 	private sparkleAnchor: HTMLElement | null = null;
 	private hostEl: HTMLElement | null = null;
 	private kbClearTimer = 0;
+	private sparklesConfig: Partial<VibeSparkleConfig> | null = null;
+	private tiltStrength = 50;
 
 	isActive(): boolean {
 		return !this.closed && !!this.root;
@@ -94,12 +102,21 @@ export class PhotoPresentation {
 		this.slides = clean;
 		this.index = 0;
 		this.usingA = true;
-		this.intervalMs = Math.max(
-			1500,
-			options.intervalMs ?? DEFAULTS.intervalMs,
-		);
-		this.fadeMs = Math.max(200, options.fadeMs ?? DEFAULTS.fadeMs);
-		this.kenBurns = options.kenBurns ?? DEFAULTS.kenBurns;
+
+		const cfg = normalizePresentationSettings(options.settings);
+		this.intervalMs = Math.round(cfg.intervalSec * 1000);
+		this.fadeMs = cfg.fadeMs;
+		this.kenBurnsStrength = cfg.kenBurnsStrength;
+		this.aurasEnabled = cfg.auras;
+		this.sparklesEnabled = cfg.sparkles;
+		this.paletteBg = cfg.paletteBg;
+		this.transition = normalizePresentationTransition(cfg.transition);
+		this.sparklesConfig = options.sparklesConfig ?? null;
+		this.tiltStrength =
+			typeof options.tiltStrength === "number" &&
+			Number.isFinite(options.tiltStrength)
+				? options.tiltStrength
+				: 50;
 		this.onClose = options.onClose ?? null;
 
 		const root = document.createElement("div");
@@ -108,6 +125,10 @@ export class PhotoPresentation {
 		root.setAttribute("role", "dialog");
 		root.setAttribute("aria-modal", "true");
 		root.setAttribute("aria-label", "Photo presentation");
+		root.dataset.transition = this.transition;
+		root.classList.toggle(`${ROOT_CLS}--palette-bg`, this.paletteBg);
+		root.classList.toggle(`${ROOT_CLS}--vignette`, cfg.vignette);
+		root.classList.toggle(`${ROOT_CLS}--letterbox`, cfg.letterbox);
 		root.style.setProperty("--intuition-present-fade", `${this.fadeMs}ms`);
 		root.style.setProperty(
 			"--intuition-present-hold",
@@ -154,12 +175,21 @@ export class PhotoPresentation {
 		this.imgA = a.img;
 		this.imgB = b.img;
 
-		/* Stable sparkle host — survives slide swaps so particles don't reset. */
 		const sparkleAnchor = document.createElement("div");
 		sparkleAnchor.className = `${ROOT_CLS}__sparkle-anchor`;
 		sparkleAnchor.setAttribute("aria-hidden", "true");
 		stage.appendChild(sparkleAnchor);
 		this.sparkleAnchor = sparkleAnchor;
+
+		const letterbox = document.createElement("div");
+		letterbox.className = `${ROOT_CLS}__letterbox`;
+		letterbox.setAttribute("aria-hidden", "true");
+		stage.appendChild(letterbox);
+
+		const vignette = document.createElement("div");
+		vignette.className = `${ROOT_CLS}__vignette`;
+		vignette.setAttribute("aria-hidden", "true");
+		stage.appendChild(vignette);
 
 		const chrome = document.createElement("div");
 		chrome.className = `${ROOT_CLS}__chrome`;
@@ -202,28 +232,29 @@ export class PhotoPresentation {
 		this.hostEl = host;
 		host.classList.add("intuition-photo-presentation-active");
 
-		this.sparkles = new VibeSparkleController();
-		this.sparkles.attach(root, {
-			getSuspended: () => false,
-			getSelectionCount: () => 0,
-			getZoom: () => 1,
-		});
-		this.sparkles.setCardHosts(() =>
-			this.sparkleAnchor?.isConnected ? [this.sparkleAnchor] : [],
-		);
-		this.sparkles.setSpawnAroundCenter(true);
-		const sparkleBase = normalizeSparkleConfig(
-			options.sparkles ?? DEFAULT_SPARKLE_CONFIG,
-		);
-		/* Presentation has one host — bump density so sparkles read clearly. */
-		this.sparkles.setConfig({
-			...sparkleBase,
-			amount: Math.min(500, Math.round(sparkleBase.amount * 2.4)),
-			frequency: Math.min(200, Math.round(sparkleBase.frequency * 2.0)),
-			size: Math.min(48, Math.round(sparkleBase.size * 1.2)),
-			opacity: Math.min(100, Math.round(sparkleBase.opacity * 1.05)),
-		});
-		this.sparkles.setEnabled(true);
+		if (this.sparklesEnabled) {
+			this.sparkles = new VibeSparkleController();
+			this.sparkles.attach(root, {
+				getSuspended: () => false,
+				getSelectionCount: () => 0,
+				getZoom: () => 1,
+			});
+			this.sparkles.setCardHosts(() =>
+				this.sparkleAnchor?.isConnected ? [this.sparkleAnchor] : [],
+			);
+			this.sparkles.setSpawnAroundCenter(true);
+			const sparkleBase = normalizeSparkleConfig(
+				this.sparklesConfig ?? DEFAULT_SPARKLE_CONFIG,
+			);
+			this.sparkles.setConfig({
+				...sparkleBase,
+				amount: Math.min(500, Math.round(sparkleBase.amount * 2.4)),
+				frequency: Math.min(200, Math.round(sparkleBase.frequency * 2.0)),
+				size: Math.min(48, Math.round(sparkleBase.size * 1.2)),
+				opacity: Math.min(100, Math.round(sparkleBase.opacity * 1.05)),
+			});
+			this.sparkles.setEnabled(true);
+		}
 
 		this.tilt = new VibeTiltController();
 		this.tilt.attach(root, {
@@ -234,12 +265,7 @@ export class PhotoPresentation {
 			isolateGlobalClass: true,
 			glareEnabled: false,
 		});
-		this.tilt.setStrength(
-			typeof options.tiltStrength === "number" &&
-				Number.isFinite(options.tiltStrength)
-				? options.tiltStrength
-				: 50,
-		);
+		this.tilt.setStrength(this.tiltStrength);
 		this.tilt.setEnabled(true);
 
 		this.keyHandler = (ev: KeyboardEvent) => {
@@ -280,8 +306,6 @@ export class PhotoPresentation {
 			window.removeEventListener("keydown", this.keyHandler, true);
 			this.keyHandler = null;
 		}
-		if (this.frameA) removeAuraLayer(this.frameA);
-		if (this.frameB) removeAuraLayer(this.frameB);
 		if (this.motionA) removeAuraLayer(this.motionA);
 		if (this.motionB) removeAuraLayer(this.motionB);
 		this.sparkles?.destroy();
@@ -364,18 +388,22 @@ export class PhotoPresentation {
 		if (!animate) {
 			this.clearKenBurns(this.layerA);
 			this.clearKenBurns(this.layerB);
+			this.clearLayerTransition(this.layerA);
+			this.clearLayerTransition(this.layerB);
 			this.imgA.src = slide.src;
 			this.imgA.alt = slide.label ?? "";
-			this.layerA.style.opacity = "1";
-			this.layerB.style.opacity = "0";
 			this.layerA.classList.add(`${ROOT_CLS}__layer--in`);
 			this.layerA.classList.remove(`${ROOT_CLS}__layer--out`);
 			this.layerB.classList.add(`${ROOT_CLS}__layer--out`);
 			this.layerB.classList.remove(`${ROOT_CLS}__layer--in`);
-			if (this.kenBurns) {
-				this.applyKenBurns(this.layerA, this.motionA, index);
+			this.layerA.style.opacity = "1";
+			this.layerA.style.transform = "";
+			this.layerB.style.opacity = "0";
+			this.layerB.style.transform = "";
+			if (this.kenBurnsStrength > 0) {
+				void this.applyKenBurns(this.layerA, this.motionA, this.imgA, index);
 			}
-			void this.refreshAura(this.motionA, this.imgA, slide.src);
+			void this.refreshSlideFx(this.motionA, this.imgA, slide.src);
 			this.usingA = true;
 		} else {
 			const incomingImg = this.usingA ? this.imgB : this.imgA;
@@ -383,7 +411,6 @@ export class PhotoPresentation {
 			const incomingMotion = this.usingA ? this.motionB : this.motionA;
 			const outgoingLayer = this.usingA ? this.layerA : this.layerB;
 
-			/* Freeze outgoing scale so fade doesn't snap from 1.14 → 1.0. */
 			this.freezeKenBurns(outgoingLayer);
 			this.clearKenBurns(incomingLayer);
 
@@ -393,18 +420,25 @@ export class PhotoPresentation {
 			incomingLayer.classList.remove(`${ROOT_CLS}__layer--out`);
 			outgoingLayer.classList.add(`${ROOT_CLS}__layer--out`);
 			outgoingLayer.classList.remove(`${ROOT_CLS}__layer--in`);
-			incomingLayer.style.opacity = "1";
-			outgoingLayer.style.opacity = "0";
-			if (this.kenBurns) {
-				this.applyKenBurns(incomingLayer, incomingMotion, index);
+
+			this.runTransition(incomingLayer, outgoingLayer);
+
+			if (this.kenBurnsStrength > 0) {
+				void this.applyKenBurns(
+					incomingLayer,
+					incomingMotion,
+					incomingImg,
+					index,
+				);
 			}
-			void this.refreshAura(incomingMotion, incomingImg, slide.src);
+			void this.refreshSlideFx(incomingMotion, incomingImg, slide.src);
 			this.usingA = !this.usingA;
 
 			this.kbClearTimer = window.setTimeout(() => {
 				this.kbClearTimer = 0;
 				if (this.closed) return;
 				this.clearKenBurns(outgoingLayer);
+				this.clearLayerTransition(outgoingLayer);
 			}, this.fadeMs + 40);
 		}
 
@@ -414,6 +448,51 @@ export class PhotoPresentation {
 			const label = slide.label ? ` · ${slide.label}` : "";
 			this.metaEl.textContent = `${index + 1} / ${this.slides.length}${label}`;
 		}
+	}
+
+	private runTransition(incoming: HTMLElement, outgoing: HTMLElement) {
+		this.clearLayerTransition(incoming);
+		this.clearLayerTransition(outgoing);
+		const fade = `${this.fadeMs}ms`;
+		incoming.style.transition = "none";
+		outgoing.style.transition = `opacity ${fade} ease, transform ${fade} ease`;
+
+		if (this.transition === "zoom") {
+			incoming.classList.add(`${ROOT_CLS}__layer--tx-prep`);
+			incoming.style.opacity = "0";
+			incoming.style.transform = "scale(1.08)";
+		} else if (this.transition === "slide") {
+			incoming.classList.add(`${ROOT_CLS}__layer--tx-prep`);
+			incoming.style.opacity = "0";
+			incoming.style.transform = "translateX(7%)";
+		} else {
+			incoming.style.opacity = "0";
+			incoming.style.transform = "";
+		}
+
+		void incoming.offsetWidth;
+
+		incoming.style.transition = `opacity ${fade} ease, transform ${fade} ease`;
+		incoming.style.opacity = "1";
+		incoming.style.transform = "none";
+		incoming.classList.remove(`${ROOT_CLS}__layer--tx-prep`);
+
+		outgoing.style.opacity = "0";
+		if (this.transition === "zoom") {
+			outgoing.classList.add(`${ROOT_CLS}__layer--tx-zoom-out`);
+			outgoing.style.transform = "scale(0.94)";
+		} else if (this.transition === "slide") {
+			outgoing.classList.add(`${ROOT_CLS}__layer--tx-slide-out`);
+			outgoing.style.transform = "translateX(-6%)";
+		} else {
+			outgoing.style.transform = "";
+		}
+	}
+
+	private clearLayerTransition(layer: HTMLElement) {
+		for (const c of TX_CLASSES) layer.classList.remove(c);
+		layer.style.transition = "";
+		layer.style.transform = "";
 	}
 
 	private activeTiltCards(): VibeCard[] {
@@ -432,7 +511,7 @@ export class PhotoPresentation {
 		return cards;
 	}
 
-	private async refreshAura(
+	private async refreshSlideFx(
 		host: HTMLElement,
 		img: HTMLImageElement,
 		seed: string,
@@ -442,6 +521,11 @@ export class PhotoPresentation {
 			await waitForImage(img);
 			if (this.closed || gen !== this.auraGen) return;
 			const palette = extractPalette(img);
+			this.applyPaletteBackground(palette);
+			if (!this.aurasEnabled) {
+				removeAuraLayer(host);
+				return;
+			}
 			paintAuraLayer(host, {
 				color: palette?.[0] ?? "#7a6bb5",
 				palette: palette ?? undefined,
@@ -452,6 +536,11 @@ export class PhotoPresentation {
 			});
 		} catch {
 			if (this.closed || gen !== this.auraGen) return;
+			this.applyPaletteBackground(null);
+			if (!this.aurasEnabled) {
+				removeAuraLayer(host);
+				return;
+			}
 			paintAuraLayer(host, {
 				color: "#7a6bb5",
 				strength: 36,
@@ -462,21 +551,56 @@ export class PhotoPresentation {
 		}
 	}
 
-	private applyKenBurns(
+	private applyPaletteBackground(palette: string[] | null) {
+		if (!this.root || !this.paletteBg) {
+			this.root?.style.removeProperty("--intuition-present-c1");
+			this.root?.style.removeProperty("--intuition-present-c2");
+			this.root?.style.removeProperty("--intuition-present-c3");
+			return;
+		}
+		const c1 = palette?.[0] ?? "#2a2438";
+		const c2 = palette?.[1] ?? palette?.[0] ?? "#1a1524";
+		const c3 = palette?.[2] ?? "#0a0a0b";
+		this.root.style.setProperty("--intuition-present-c1", c1);
+		this.root.style.setProperty("--intuition-present-c2", c2);
+		this.root.style.setProperty("--intuition-present-c3", c3);
+	}
+
+	private async applyKenBurns(
 		layer: HTMLElement,
 		motion: HTMLElement,
+		img: HTMLImageElement,
 		index: number,
 	) {
+		await waitForImage(img);
+		if (this.closed) return;
+		const amp = this.kenBurnsAmplitude(img);
+		if (amp <= 0.01) {
+			this.clearKenBurns(layer);
+			return;
+		}
 		const variant = KEN_BURNS_VARIANTS[index % KEN_BURNS_VARIANTS.length]!;
-		/* Hold a bit past the crossfade so the last frame isn't a dead stop. */
 		const dur = this.intervalMs + this.fadeMs + 80;
 		motion.style.transform = "";
 		motion.style.animationName = "";
+		motion.style.setProperty("--intuition-kb-amp", amp.toFixed(3));
 		layer.classList.add(variant);
 		motion.style.animationDuration = `${dur}ms`;
 	}
 
-	/** Keep the current scale while fading out — avoids a snap shrink. */
+	/** Portrait → weaker zoom; landscape → stronger. Strength 0–100 scales overall. */
+	private kenBurnsAmplitude(img: HTMLImageElement): number {
+		const base = this.kenBurnsStrength / 100;
+		if (base <= 0) return 0;
+		const w = img.naturalWidth || 1;
+		const h = img.naturalHeight || 1;
+		const ar = w / h;
+		let aspectMul = 1;
+		if (ar < 0.85) aspectMul = 0.55; // portrait / tall
+		else if (ar > 1.25) aspectMul = 1.2; // landscape
+		return Math.min(1.35, Math.max(0, base * aspectMul));
+	}
+
 	private freezeKenBurns(layer: HTMLElement) {
 		const motion = layer.querySelector(`.${ROOT_CLS}__motion`);
 		if (!(motion instanceof HTMLElement)) return;
@@ -496,6 +620,7 @@ export class PhotoPresentation {
 			motion.style.animationDuration = "";
 			motion.style.animationName = "";
 			motion.style.transform = "";
+			motion.style.removeProperty("--intuition-kb-amp");
 		}
 	}
 }

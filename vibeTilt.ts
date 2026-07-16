@@ -53,6 +53,10 @@ export class VibeTiltController {
 	/** When true, don't toggle body/leaf vibe classes (presentation overlay). */
 	private isolateGlobalClass = false;
 	private glareEnabled = true;
+	/** Reacts to is-selected/is-focused toggles independent of pointer events —
+	 * catches selection made via click-through on media controls, keyboard,
+	 * or any path that never reaches our pointerdown listener. */
+	private selectionObserver: MutationObserver | null = null;
 
 	attach(
 		root: HTMLElement,
@@ -117,9 +121,68 @@ export class VibeTiltController {
 		};
 
 		root.addEventListener("pointermove", this.onMove, { passive: true });
-		root.addEventListener("pointerdown", this.onDown, { passive: true });
+		/**
+		 * Capture phase: media nodes (audio/image) can have inner handlers
+		 * (native <audio> controls, Obsidian's own node click handling) that
+		 * stop propagation before a bubble-phase listener on `root` would ever
+		 * see the click. Capture fires on the way down, before that can happen,
+		 * so selecting a media node reliably clears any in-flight tilt/glare.
+		 */
+		root.addEventListener("pointerdown", this.onDown, {
+			passive: true,
+			capture: true,
+		});
 		window.addEventListener("pointerup", this.onUp, { passive: true });
 		root.addEventListener("pointerleave", this.onLeave, { passive: true });
+
+		/**
+		 * Belt-and-suspenders: also react directly to the is-selected/is-focused
+		 * class toggle Obsidian applies to `.canvas-node`. This covers selection
+		 * that never fires a pointerdown on `root` at all (keyboard selection,
+		 * programmatic selection, or a stopped-propagation click) and guarantees
+		 * tilt is zeroed the instant a node becomes selected — no pointermove
+		 * needed to "catch up".
+		 */
+		if (typeof MutationObserver !== "undefined") {
+			this.selectionObserver = new MutationObserver((mutations) => {
+				for (const m of mutations) {
+					const target = m.target as HTMLElement;
+					if (!target.classList?.contains("canvas-node")) continue;
+					if (
+						target.classList.contains("is-selected") ||
+						target.classList.contains("is-focused")
+					) {
+						this.disableTiltForNode(target);
+					}
+				}
+			});
+			this.selectionObserver.observe(root, {
+				attributes: true,
+				attributeFilter: ["class"],
+				subtree: true,
+			});
+		}
+	}
+
+	/** Immediately zero tilt/glare/text-glow for one canvas node (selection path). */
+	private disableTiltForNode(node: HTMLElement) {
+		const container =
+			(node.querySelector(".canvas-node-container") as HTMLElement | null) ??
+			node;
+		this.resetCard(container);
+		this.resetTextGlow(node);
+	}
+
+	/** Selected/focused nodes are being manipulated by the user — no tilt/glow.
+	 * Walk up to the actual `.canvas-node` in case the tracked element is a
+	 * descendant/wrapper rather than the node itself. */
+	private isNodeSelected(node: HTMLElement): boolean {
+		const canvasNodeEl =
+			(node.closest(".canvas-node") as HTMLElement | null) ?? node;
+		return (
+			canvasNodeEl.classList.contains("is-selected") ||
+			canvasNodeEl.classList.contains("is-focused")
+		);
 	}
 
 	setEnabled(on: boolean) {
@@ -171,9 +234,15 @@ export class VibeTiltController {
 	}
 
 	destroy() {
+		this.selectionObserver?.disconnect();
+		this.selectionObserver = null;
 		if (this.root && this.onMove) {
 			this.root.removeEventListener("pointermove", this.onMove);
-			if (this.onDown) this.root.removeEventListener("pointerdown", this.onDown);
+			if (this.onDown) {
+				this.root.removeEventListener("pointerdown", this.onDown, {
+					capture: true,
+				});
+			}
 			if (this.onLeave) this.root.removeEventListener("pointerleave", this.onLeave);
 			this.root.removeAttribute(HOOK_ATTR);
 			this.root.classList.remove("intuition-canvas-vibe");
@@ -257,9 +326,11 @@ export class VibeTiltController {
 
 		for (const card of cards) {
 			const { el: node, kind } = card;
+			const isSelected = this.isNodeSelected(node);
 
 			if (kind === "text") {
 				if (
+					!isSelected &&
 					this.textStrength > 0.01 &&
 					this.isPointerOverTextGlyphs(node, clientX, clientY)
 				) {
@@ -270,11 +341,8 @@ export class VibeTiltController {
 				continue;
 			}
 
-			if (node.dataset.intuitionNoTilt === "1") {
-				const c = node.querySelector(
-					".canvas-node-container",
-				) as HTMLElement | null;
-				if (c) this.resetCard(c);
+			if (isSelected || node.dataset.intuitionNoTilt === "1") {
+				this.disableTiltForNode(node);
 				continue;
 			}
 

@@ -732,10 +732,31 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 
 .intuition-panel__present {
 	margin-top: 4px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 8px;
+	border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
 }
 
 .intuition-panel__present .intuition-panel__reset {
 	width: 100%;
+}
+
+.intuition-panel__present-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.intuition-panel__present-toggle label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--text-muted);
+	cursor: pointer;
 }
 
 .intuition-panel__collage-fixed {
@@ -1176,6 +1197,29 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	overscroll-behavior: none;
 	contain: layout paint;
 	--intuition-present-fade: 1200ms;
+	--intuition-present-c1: #2a2438;
+	--intuition-present-c2: #1a1524;
+	--intuition-present-c3: #0a0a0b;
+}
+
+.intuition-photo-presentation--palette-bg {
+	background:
+		radial-gradient(
+			ellipse 90% 70% at 30% 25%,
+			color-mix(in srgb, var(--intuition-present-c1) 55%, transparent) 0%,
+			transparent 62%
+		),
+		radial-gradient(
+			ellipse 80% 65% at 75% 70%,
+			color-mix(in srgb, var(--intuition-present-c2) 48%, transparent) 0%,
+			transparent 68%
+		),
+		linear-gradient(
+			160deg,
+			color-mix(in srgb, var(--intuition-present-c3) 80%, #0a0a0b) 0%,
+			#0a0a0b 55%,
+			color-mix(in srgb, var(--intuition-present-c1) 35%, #0a0a0b) 100%
+		);
 }
 
 .intuition-photo-presentation__stage {
@@ -1211,6 +1255,14 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 
 .intuition-photo-presentation__layer--out {
 	opacity: 0;
+}
+
+/* Transition prep classes — transform/opacity are driven inline by photoPresentation.ts;
+ * these just hint the compositor while a transition is in flight. */
+.intuition-photo-presentation__layer--tx-prep,
+.intuition-photo-presentation__layer--tx-zoom-out,
+.intuition-photo-presentation__layer--tx-slide-out {
+	will-change: transform, opacity;
 }
 
 /* Stable frame — overflow visible so auras can bloom past the photo. */
@@ -1254,6 +1306,37 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	transform: translate(-50%, -50%);
 	pointer-events: none;
 	z-index: 2;
+}
+
+/* Vignette / letterbox — cinematic framing, off by default until root modifier lands. */
+.intuition-photo-presentation__letterbox,
+.intuition-photo-presentation__vignette {
+	position: absolute;
+	inset: 0;
+	z-index: 3;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 400ms ease;
+}
+
+.intuition-photo-presentation--letterbox .intuition-photo-presentation__letterbox {
+	opacity: 1;
+	background: linear-gradient(
+		to bottom,
+		#000 0%,
+		transparent 10%,
+		transparent 90%,
+		#000 100%
+	);
+}
+
+.intuition-photo-presentation--vignette .intuition-photo-presentation__vignette {
+	opacity: 1;
+	background: radial-gradient(
+		ellipse 78% 78% at 50% 50%,
+		transparent 52%,
+		rgba(0, 0, 0, 0.62) 100%
+	);
 }
 
 .intuition-photo-presentation__photo {
@@ -1336,37 +1419,66 @@ body.intuition-canvas-hide-auras
 
 @keyframes intuition-kb-a {
 	from {
-		transform: scale(1.04) translate(0%, 0%);
+		transform: scale(calc(1 + 0.04 * var(--intuition-kb-amp, 1)))
+			translate(0%, 0%);
 	}
 	to {
-		transform: scale(1.14) translate(-2.5%, -1.5%);
+		transform: scale(calc(1 + 0.14 * var(--intuition-kb-amp, 1)))
+			translate(
+				calc(-2.5% * var(--intuition-kb-amp, 1)),
+				calc(-1.5% * var(--intuition-kb-amp, 1))
+			);
 	}
 }
 
 @keyframes intuition-kb-b {
 	from {
-		transform: scale(1.12) translate(-2%, 1%);
+		transform: scale(calc(1 + 0.12 * var(--intuition-kb-amp, 1)))
+			translate(
+				calc(-2% * var(--intuition-kb-amp, 1)),
+				calc(1% * var(--intuition-kb-amp, 1))
+			);
 	}
 	to {
-		transform: scale(1.04) translate(1.5%, -1%);
+		transform: scale(calc(1 + 0.04 * var(--intuition-kb-amp, 1)))
+			translate(
+				calc(1.5% * var(--intuition-kb-amp, 1)),
+				calc(-1% * var(--intuition-kb-amp, 1))
+			);
 	}
 }
 
 @keyframes intuition-kb-c {
 	from {
-		transform: scale(1.05) translate(1.5%, -1%);
+		transform: scale(calc(1 + 0.05 * var(--intuition-kb-amp, 1)))
+			translate(
+				calc(1.5% * var(--intuition-kb-amp, 1)),
+				calc(-1% * var(--intuition-kb-amp, 1))
+			);
 	}
 	to {
-		transform: scale(1.13) translate(-1%, 2%);
+		transform: scale(calc(1 + 0.13 * var(--intuition-kb-amp, 1)))
+			translate(
+				calc(-1% * var(--intuition-kb-amp, 1)),
+				calc(2% * var(--intuition-kb-amp, 1))
+			);
 	}
 }
 
 @keyframes intuition-kb-d {
 	from {
-		transform: scale(1.1) translate(0%, 1.5%);
+		transform: scale(calc(1 + 0.1 * var(--intuition-kb-amp, 1)))
+			translate(
+				0%,
+				calc(1.5% * var(--intuition-kb-amp, 1))
+			);
 	}
 	to {
-		transform: scale(1.04) translate(-2%, -1%);
+		transform: scale(calc(1 + 0.04 * var(--intuition-kb-amp, 1)))
+			translate(
+				calc(-2% * var(--intuition-kb-amp, 1)),
+				calc(-1% * var(--intuition-kb-amp, 1))
+			);
 	}
 }
 

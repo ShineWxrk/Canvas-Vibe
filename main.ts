@@ -44,6 +44,11 @@ import {
 import { FpsOverlay } from "./fpsOverlay";
 import { PhotoPresentation, type PresentationSlide } from "./photoPresentation";
 import {
+	DEFAULT_PRESENTATION_SETTINGS,
+	normalizePresentationSettings,
+	type PresentationSettings,
+} from "./presentationSettings";
+import {
 	aspectFromImageNode,
 	boundingBox,
 	clampCollageCount,
@@ -143,6 +148,8 @@ interface IntuitionCanvasSettings {
 	collagePackAxis: CollagePackAxis;
 	/** Number of columns or rows (1–20). */
 	collageCount: number;
+	/** Slideshow / presentation preferences (interval, fade, Ken Burns, FX, transition). */
+	presentation: PresentationSettings;
 }
 
 const DEFAULT_SETTINGS: IntuitionCanvasSettings = {
@@ -164,6 +171,7 @@ const DEFAULT_SETTINGS: IntuitionCanvasSettings = {
 	collageGap: 16,
 	collagePackAxis: "cols",
 	collageCount: COLLAGE_COUNT_DEFAULT,
+	presentation: { ...DEFAULT_PRESENTATION_SETTINGS },
 };
 
 const VIBE_STRENGTH_SCALE = 2;
@@ -238,6 +246,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	private vibeStrengthSaveTimer = 0;
 	private chromeSaveTimer = 0;
 	private collageGapSaveTimer = 0;
+	private presentationSaveTimer = 0;
 	private workspaceRefreshTimer = 0;
 	private zoomFarByLeaf = new Map<string, boolean>();
 	private patchedCanvasViewport = new WeakSet<object>();
@@ -388,6 +397,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
 		if (this.chromeSaveTimer) window.clearTimeout(this.chromeSaveTimer);
 		if (this.collageGapSaveTimer) window.clearTimeout(this.collageGapSaveTimer);
+		if (this.presentationSaveTimer) window.clearTimeout(this.presentationSaveTimer);
 		if (this.workspaceRefreshTimer) window.clearTimeout(this.workspaceRefreshTimer);
 		for (const t of this.panIdleTimers.values()) window.clearTimeout(t);
 		this.panIdleTimers.clear();
@@ -547,6 +557,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 				? migrateLegacySparkleConfig(mergedSparkles)
 				: normalizeSparkleConfig(mergedSparkles);
 		this.settings.globalAura = normalizeGlobalAura(raw?.globalAura);
+		this.settings.presentation = normalizePresentationSettings(raw?.presentation);
 		this.settings.vibeTextStrength = this.clampVibeTextStrength(
 			raw?.vibeTextStrength ?? DEFAULT_SETTINGS.vibeTextStrength,
 		);
@@ -1895,6 +1906,9 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			},
 			onArrange: () => this.arrangeSelectedImagesCollage(view),
 			onPresent: () => this.startPhotoPresentation(leaf),
+			getPresentation: () => this.settings.presentation,
+			onPresentationChange: (partial) =>
+				this.patchPresentationSettings(partial),
 		});
 		this.imagePanels.set(id, panel);
 	}
@@ -2151,7 +2165,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 
 		const gapLabel = document.createElement("span");
 		gapLabel.className = "intuition-collage-panel__label";
-		gapLabel.textContent = "Зазор";
+		gapLabel.textContent = "Отступы";
 
 		const slider = document.createElement("input");
 		slider.type = "range";
@@ -2162,7 +2176,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		slider.value = String(
 			Math.min(COLLAGE_GAP_SLIDER_MAX, clampCollageGap(this.settings.collageGap)),
 		);
-		slider.setAttribute("aria-label", "Зазор между фото");
+		slider.setAttribute("aria-label", "Отступы между фото");
 		slider.setAttribute("data-collage-gap", "1");
 
 		const gapInput = document.createElement("input");
@@ -2172,7 +2186,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		gapInput.step = "1";
 		gapInput.className = "intuition-collage-panel__number";
 		gapInput.value = String(clampCollageGap(this.settings.collageGap));
-		gapInput.setAttribute("aria-label", "Зазор в пикселях");
+		gapInput.setAttribute("aria-label", "Отступы в пикселях");
 		gapInput.setAttribute("data-collage-gap-px", "1");
 
 		const applyGap = (raw: number) => {
@@ -2373,7 +2387,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		});
 		button.setAttribute(
 			"aria-label",
-			open ? "Скрыть настройки коллажа" : `Коллаж, зазор ${gap}px`,
+			open ? "Скрыть настройки коллажа" : `Коллаж, отступы ${gap}px`,
 		);
 	}
 
@@ -2403,6 +2417,22 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			this.collageGapSaveTimer = 0;
 			void this.saveSettings();
 		}, 200);
+	}
+
+	private queuePresentationSettingsSave() {
+		if (this.presentationSaveTimer) window.clearTimeout(this.presentationSaveTimer);
+		this.presentationSaveTimer = window.setTimeout(() => {
+			this.presentationSaveTimer = 0;
+			void this.saveSettings();
+		}, 200);
+	}
+
+	private patchPresentationSettings(partial: Partial<PresentationSettings>) {
+		this.settings.presentation = normalizePresentationSettings({
+			...this.settings.presentation,
+			...partial,
+		});
+		this.queuePresentationSettingsSave();
 	}
 
 	/** Full-viewport slideshow for selected images (crossfade + Ken Burns). */
@@ -2449,10 +2479,8 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		}
 
 		const ok = present.start(host, slides, {
-			intervalMs: 7000,
-			fadeMs: 1200,
-			kenBurns: true,
-			sparkles: this.settings.vibeSparkles,
+			settings: this.settings.presentation,
+			sparklesConfig: this.settings.vibeSparkles,
 			/* Half of canvas vibe tilt; no cursor glare in slideshow. */
 			tiltStrength: Math.round(
 				this.clampVibeStrength(this.settings.vibeStrength) * 0.5,
@@ -2545,7 +2573,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		const axisNote =
 			axis === "rows" ? ` · ${count} стр.` : ` · ${count} стлб.`;
 		new Notice(
-			`Коллаж: ${ordered.length} фото · зазор ${gap}px${axisNote}`,
+			`Коллаж: ${ordered.length} фото · отступы ${gap}px${axisNote}`,
 			1400,
 		);
 	}

@@ -26,6 +26,22 @@ import {
 	hasImageFormat,
 	peekStyleClipboard,
 } from "./styleClipboard";
+import {
+	normalizePresentationSettings,
+	normalizePresentationTransition,
+	PRESENTATION_LIMITS,
+	type PresentationSettings,
+	type PresentationTransition,
+} from "./presentationSettings";
+
+const PRESENTATION_TRANSITION_OPTIONS: {
+	value: PresentationTransition;
+	label: string;
+}[] = [
+	{ value: "dissolve", label: "Растворение" },
+	{ value: "zoom", label: "Наплыв" },
+	{ value: "slide", label: "Сдвиг" },
+];
 
 /** UI shows transparency % (0 = opaque, 100 = invisible). Stored style uses opacity. */
 function toTransparency(opacity: number): number {
@@ -46,6 +62,10 @@ export type ImageStylePanelCollageHooks = {
 	onArrange: () => void;
 	/** Start photo presentation for selected images (non-images ignored). */
 	onPresent: () => void;
+	/** Current slideshow / presentation preferences. */
+	getPresentation: () => PresentationSettings;
+	/** Patch + persist slideshow preferences. */
+	onPresentationChange: (partial: Partial<PresentationSettings>) => void;
 };
 
 export class ImageStylePanel {
@@ -64,6 +84,20 @@ export class ImageStylePanel {
 	private collageHooks: ImageStylePanelCollageHooks | null = null;
 	private presentSection: HTMLElement;
 	private presentBtn: HTMLButtonElement;
+	private presentInputs: {
+		interval: HTMLInputElement;
+		intervalValue: HTMLElement;
+		fade: HTMLInputElement;
+		fadeValue: HTMLElement;
+		kenBurns: HTMLInputElement;
+		kenBurnsValue: HTMLElement;
+		transition: HTMLSelectElement;
+		auras: HTMLInputElement;
+		sparkles: HTMLInputElement;
+		paletteBg: HTMLInputElement;
+		vignette: HTMLInputElement;
+		letterbox: HTMLInputElement;
+	};
 	private inputs: {
 		transparency: HTMLInputElement;
 		transparencyValue: HTMLElement;
@@ -101,7 +135,10 @@ export class ImageStylePanel {
 
 		const body = this.el.createDiv({ cls: "intuition-panel__body" });
 
-		const opacityRow = body.createDiv({ cls: "intuition-panel__row" });
+		// ── Стиль ──
+		const styleAcc = this.createAccordion(body, "Стиль", true);
+
+		const opacityRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
 		opacityRow.createSpan({
 			text: "Прозрачность",
 			cls: "intuition-panel__label",
@@ -115,7 +152,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		const colorRow = body.createDiv({ cls: "intuition-panel__row" });
+		const colorRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
 		colorRow.createSpan({
 			text: "Цвет обводки",
 			cls: "intuition-panel__label",
@@ -125,7 +162,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__color",
 		});
 
-		const widthRow = body.createDiv({ cls: "intuition-panel__row" });
+		const widthRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
 		widthRow.createSpan({
 			text: "Ширина",
 			cls: "intuition-panel__label",
@@ -139,7 +176,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		const radiusRow = body.createDiv({ cls: "intuition-panel__row" });
+		const radiusRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
 		radiusRow.createSpan({
 			text: "Скругление",
 			cls: "intuition-panel__label",
@@ -153,7 +190,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		const styleRow = body.createDiv({ cls: "intuition-panel__row" });
+		const styleRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
 		styleRow.createSpan({
 			text: "Стиль",
 			cls: "intuition-panel__label",
@@ -165,7 +202,10 @@ export class ImageStylePanel {
 			borderStyle.createEl("option", { text: opt.label, value: opt.value });
 		}
 
-		const auraRow = body.createDiv({ cls: "intuition-panel__row" });
+		// ── Аура ──
+		const auraAcc = this.createAccordion(body, "Аура", false);
+
+		const auraRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
 		auraRow.createSpan({ text: "Аура", cls: "intuition-panel__label" });
 		const auraLabel = auraRow.createEl("label", {
 			cls: "intuition-text-panel__toggle",
@@ -173,7 +213,7 @@ export class ImageStylePanel {
 		const aura = auraLabel.createEl("input", { type: "checkbox" });
 		auraLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
 
-		const shimmerRow = body.createDiv({ cls: "intuition-panel__row" });
+		const shimmerRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
 		shimmerRow.createSpan({ text: "Перелив", cls: "intuition-panel__label" });
 		const shimmerLabel = shimmerRow.createEl("label", {
 			cls: "intuition-text-panel__toggle",
@@ -181,7 +221,7 @@ export class ImageStylePanel {
 		const auraShimmer = shimmerLabel.createEl("input", { type: "checkbox" });
 		shimmerLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
 
-		const auraStrengthRow = body.createDiv({ cls: "intuition-panel__row" });
+		const auraStrengthRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
 		auraStrengthRow.createSpan({
 			text: "Сила ауры",
 			cls: "intuition-panel__label",
@@ -197,7 +237,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		const auraSizeRow = body.createDiv({ cls: "intuition-panel__row" });
+		const auraSizeRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
 		auraSizeRow.createSpan({
 			text: "Площадь",
 			cls: "intuition-panel__label",
@@ -213,7 +253,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		const auraColorRow = body.createDiv({ cls: "intuition-panel__row" });
+		const auraColorRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
 		auraColorRow.createSpan({
 			text: "Цвет ауры",
 			cls: "intuition-panel__label",
@@ -224,7 +264,10 @@ export class ImageStylePanel {
 			attr: { title: "Авто из картинки, можно переопределить" },
 		});
 
-		const tiltRow = body.createDiv({ cls: "intuition-panel__row" });
+		// ── Наклон ──
+		const tiltAcc = this.createAccordion(body, "Наклон", false);
+
+		const tiltRow = tiltAcc.body.createDiv({ cls: "intuition-panel__row" });
 		tiltRow.createSpan({ text: "Наклон", cls: "intuition-panel__label" });
 		const tiltLabel = tiltRow.createEl("label", {
 			cls: "intuition-text-panel__toggle",
@@ -232,7 +275,7 @@ export class ImageStylePanel {
 		const vibeTilt = tiltLabel.createEl("input", { type: "checkbox" });
 		tiltLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
 
-		const tiltStrengthRow = body.createDiv({ cls: "intuition-panel__row" });
+		const tiltStrengthRow = tiltAcc.body.createDiv({ cls: "intuition-panel__row" });
 		tiltStrengthRow.createSpan({
 			text: "Сила наклона",
 			cls: "intuition-panel__label",
@@ -330,16 +373,16 @@ export class ImageStylePanel {
 			this.commit({ vibeTiltStrength: value });
 		});
 
-		this.collageSection = body.createDiv({
-			cls: "intuition-panel__collage",
-		});
+		// ── Коллаж ──
+		const collageAcc = this.createAccordion(body, "Коллаж", true);
+		this.collageSection = collageAcc.section;
 		this.collageSection.hide();
 
-		const collageGapRow = this.collageSection.createDiv({
+		const collageGapRow = collageAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		collageGapRow.createSpan({
-			text: "Зазор",
+			text: "Отступы",
 			cls: "intuition-panel__label",
 		});
 		const collageGapWrap = collageGapRow.createDiv({
@@ -351,7 +394,7 @@ export class ImageStylePanel {
 				min: "0",
 				max: String(COLLAGE_GAP_SLIDER_MAX),
 				step: "1",
-				"aria-label": "Зазор между фото",
+				"aria-label": "Отступы между фото",
 			},
 		});
 		this.collageGapPx = collageGapWrap.createEl("input", {
@@ -361,7 +404,7 @@ export class ImageStylePanel {
 				min: "0",
 				max: String(COLLAGE_GAP_MAX),
 				step: "1",
-				"aria-label": "Зазор в пикселях",
+				"aria-label": "Отступы в пикселях",
 			},
 		});
 		const applyGap = (raw: number) => {
@@ -384,7 +427,7 @@ export class ImageStylePanel {
 			}
 		});
 
-		const collageGridRow = this.collageSection.createDiv({
+		const collageGridRow = collageAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		collageGridRow.createSpan({
@@ -405,7 +448,7 @@ export class ImageStylePanel {
 			);
 		});
 
-		const collageCountRow = this.collageSection.createDiv({
+		const collageCountRow = collageAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		this.collageCountLabel = collageCountRow.createSpan({
@@ -447,7 +490,7 @@ export class ImageStylePanel {
 		this.collageCount.addEventListener("change", commitCount);
 		this.collageCount.addEventListener("blur", commitCount);
 
-		const collageApplyRow = this.collageSection.createDiv({
+		const collageApplyRow = collageAcc.body.createDiv({
 			cls: "intuition-panel__row intuition-panel__row--full",
 		});
 		const arrangeBtn = collageApplyRow.createEl("button", {
@@ -456,9 +499,190 @@ export class ImageStylePanel {
 		});
 		arrangeBtn.addEventListener("click", () => this.collageHooks?.onArrange());
 
-		this.presentSection = body.createDiv({
-			cls: "intuition-panel__row intuition-panel__row--full intuition-panel__present",
+		this.presentSection = body.createDiv({ cls: "intuition-panel__present" });
+
+		const presentL = PRESENTATION_LIMITS;
+
+		// ── Тайминг ──
+		const presentTimingAcc = this.createAccordion(
+			this.presentSection,
+			"Тайминг",
+			true,
+		);
+
+		const intervalRow = presentTimingAcc.body.createDiv({
+			cls: "intuition-panel__row",
 		});
+		intervalRow.createSpan({ text: "Интервал", cls: "intuition-panel__label" });
+		const intervalWrap = intervalRow.createDiv({ cls: "intuition-panel__size" });
+		const presentInterval = intervalWrap.createEl("input", {
+			type: "range",
+			attr: {
+				min: String(presentL.intervalSec.min),
+				max: String(presentL.intervalSec.max),
+				step: "1",
+				"aria-label": "Интервал между слайдами",
+			},
+		});
+		const presentIntervalValue = intervalWrap.createSpan({
+			cls: "intuition-panel__value",
+		});
+
+		const fadeRow = presentTimingAcc.body.createDiv({
+			cls: "intuition-panel__row",
+		});
+		fadeRow.createSpan({ text: "Плавность", cls: "intuition-panel__label" });
+		const fadeWrap = fadeRow.createDiv({ cls: "intuition-panel__size" });
+		const presentFade = fadeWrap.createEl("input", {
+			type: "range",
+			attr: {
+				min: String(presentL.fadeMs.min),
+				max: String(presentL.fadeMs.max),
+				step: "50",
+				"aria-label": "Длительность перехода",
+			},
+		});
+		const presentFadeValue = fadeWrap.createSpan({
+			cls: "intuition-panel__value",
+		});
+
+		// ── Переходы ──
+		const presentTransitionsAcc = this.createAccordion(
+			this.presentSection,
+			"Переходы",
+			false,
+		);
+
+		const kbRow = presentTransitionsAcc.body.createDiv({
+			cls: "intuition-panel__row",
+		});
+		kbRow.createSpan({ text: "Кен Бёрнс", cls: "intuition-panel__label" });
+		const kbWrap = kbRow.createDiv({ cls: "intuition-panel__size" });
+		const presentKenBurns = kbWrap.createEl("input", {
+			type: "range",
+			attr: {
+				min: String(presentL.kenBurnsStrength.min),
+				max: String(presentL.kenBurnsStrength.max),
+				step: "1",
+				"aria-label": "Сила эффекта Кен Бёрнс",
+			},
+		});
+		const presentKenBurnsValue = kbWrap.createSpan({
+			cls: "intuition-panel__value",
+		});
+
+		const transitionRow = presentTransitionsAcc.body.createDiv({
+			cls: "intuition-panel__row",
+		});
+		transitionRow.createSpan({ text: "Переход", cls: "intuition-panel__label" });
+		const presentTransition = transitionRow.createEl("select", {
+			cls: "dropdown intuition-panel__select",
+			attr: { "aria-label": "Тип перехода между слайдами" },
+		});
+		for (const opt of PRESENTATION_TRANSITION_OPTIONS) {
+			presentTransition.createEl("option", {
+				text: opt.label,
+				value: opt.value,
+			});
+		}
+
+		// ── Эффекты ──
+		const presentEffectsAcc = this.createAccordion(
+			this.presentSection,
+			"Эффекты",
+			false,
+		);
+
+		const makePresentToggleRow = (label: string, aria: string) => {
+			const row = presentEffectsAcc.body.createDiv({
+				cls: "intuition-panel__row",
+			});
+			row.createSpan({ text: label, cls: "intuition-panel__label" });
+			const toggleLabel = row.createEl("label", {
+				cls: "intuition-text-panel__toggle",
+			});
+			const input = toggleLabel.createEl("input", {
+				type: "checkbox",
+				attr: { "aria-label": aria },
+			});
+			toggleLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
+			return input;
+		};
+
+		const presentAuras = makePresentToggleRow("Ауры", "Ауры в слайдшоу");
+		const presentSparkles = makePresentToggleRow(
+			"Блестки",
+			"Блестки в слайдшоу",
+		);
+		const presentPaletteBg = makePresentToggleRow(
+			"Фон-палитра",
+			"Фон из палитры фото",
+		);
+		const presentVignette = makePresentToggleRow(
+			"Виньетка",
+			"Виньетка по краям кадра",
+		);
+		const presentLetterbox = makePresentToggleRow(
+			"Леттербокс",
+			"Чёрные поля сверху и снизу",
+		);
+
+		this.presentInputs = {
+			interval: presentInterval,
+			intervalValue: presentIntervalValue,
+			fade: presentFade,
+			fadeValue: presentFadeValue,
+			kenBurns: presentKenBurns,
+			kenBurnsValue: presentKenBurnsValue,
+			transition: presentTransition,
+			auras: presentAuras,
+			sparkles: presentSparkles,
+			paletteBg: presentPaletteBg,
+			vignette: presentVignette,
+			letterbox: presentLetterbox,
+		};
+
+		for (const range of [presentInterval, presentFade, presentKenBurns]) {
+			range.addEventListener("pointerdown", (e) => e.stopPropagation());
+			range.addEventListener("click", (e) => e.stopPropagation());
+		}
+
+		presentInterval.addEventListener("input", () => {
+			const value = Number(presentInterval.value);
+			presentIntervalValue.setText(`${value}с`);
+			this.commitPresentation({ intervalSec: value });
+		});
+		presentFade.addEventListener("input", () => {
+			const value = Number(presentFade.value);
+			presentFadeValue.setText(`${value}мс`);
+			this.commitPresentation({ fadeMs: value });
+		});
+		presentKenBurns.addEventListener("input", () => {
+			const value = Number(presentKenBurns.value);
+			presentKenBurnsValue.setText(`${value}%`);
+			this.commitPresentation({ kenBurnsStrength: value });
+		});
+		presentTransition.addEventListener("change", () =>
+			this.commitPresentation({
+				transition: normalizePresentationTransition(presentTransition.value),
+			}),
+		);
+		presentAuras.addEventListener("change", () =>
+			this.commitPresentation({ auras: presentAuras.checked }),
+		);
+		presentSparkles.addEventListener("change", () =>
+			this.commitPresentation({ sparkles: presentSparkles.checked }),
+		);
+		presentPaletteBg.addEventListener("change", () =>
+			this.commitPresentation({ paletteBg: presentPaletteBg.checked }),
+		);
+		presentVignette.addEventListener("change", () =>
+			this.commitPresentation({ vignette: presentVignette.checked }),
+		);
+		presentLetterbox.addEventListener("change", () =>
+			this.commitPresentation({ letterbox: presentLetterbox.checked }),
+		);
+
 		this.presentBtn = this.presentSection.createEl("button", {
 			cls: "mod-cta intuition-panel__reset",
 			text: "Слайдшоу",
@@ -470,6 +694,7 @@ export class ImageStylePanel {
 		this.presentBtn.addEventListener("click", () =>
 			this.collageHooks?.onPresent(),
 		);
+
 		this.presentSection.hide();
 
 		const actions = body.createDiv({
@@ -512,6 +737,49 @@ export class ImageStylePanel {
 			this.style = { ...DEFAULT_IMAGE_STYLE };
 			this.syncInputs();
 		});
+	}
+
+	/** Collapsible category, same markup/behavior as the vibe panel's accordions. */
+	private createAccordion(parent: HTMLElement, title: string, open: boolean) {
+		const section = parent.createDiv({
+			cls: "intuition-vibe-panel__accordion",
+		});
+		if (open) section.addClass("is-open");
+
+		const head = section.createDiv({
+			cls: "intuition-vibe-panel__accordion-head",
+			attr: { role: "button", tabindex: "0" },
+		});
+		head.setAttribute("aria-expanded", open ? "true" : "false");
+
+		const chevron = head.createSpan({
+			cls: "intuition-vibe-panel__accordion-chevron",
+		});
+		setIcon(chevron, "chevron-right");
+		head.createSpan({ cls: "intuition-vibe-panel__accordion-title", text: title });
+
+		const contentBody = section.createDiv({
+			cls: "intuition-vibe-panel__accordion-body",
+		});
+
+		const toggle = () => {
+			const next = !section.hasClass("is-open");
+			section.toggleClass("is-open", next);
+			head.setAttribute("aria-expanded", next ? "true" : "false");
+		};
+		head.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			toggle();
+		});
+		head.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				toggle();
+			}
+		});
+
+		return { section, body: contentBody, head };
 	}
 
 	setCollageHooks(hooks: ImageStylePanelCollageHooks) {
@@ -654,8 +922,38 @@ export class ImageStylePanel {
 
 	private syncPresentControls() {
 		const show = this.nodes.length >= 1 && !!this.collageHooks?.onPresent;
-		if (show) this.presentSection.show();
-		else this.presentSection.hide();
+		if (show) {
+			this.presentSection.show();
+			this.syncPresentSettings();
+		} else {
+			this.presentSection.hide();
+		}
+	}
+
+	private syncPresentSettings() {
+		if (!this.collageHooks?.getPresentation) return;
+		const cfg = normalizePresentationSettings(
+			this.collageHooks.getPresentation(),
+		);
+		const i = this.presentInputs;
+		i.interval.value = String(cfg.intervalSec);
+		i.intervalValue.setText(`${cfg.intervalSec}с`);
+		i.fade.value = String(cfg.fadeMs);
+		i.fadeValue.setText(`${cfg.fadeMs}мс`);
+		i.kenBurns.value = String(cfg.kenBurnsStrength);
+		i.kenBurnsValue.setText(`${cfg.kenBurnsStrength}%`);
+		i.transition.value = cfg.transition;
+		i.auras.checked = cfg.auras;
+		i.sparkles.checked = cfg.sparkles;
+		i.paletteBg.checked = cfg.paletteBg;
+		i.vignette.checked = cfg.vignette;
+		i.letterbox.checked = cfg.letterbox;
+	}
+
+	private commitPresentation(partial: Partial<PresentationSettings>) {
+		if (!this.collageHooks?.onPresentationChange) return;
+		this.collageHooks.onPresentationChange(partial);
+		this.syncPresentSettings();
 	}
 
 	private syncInputs() {

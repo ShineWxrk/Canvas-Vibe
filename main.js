@@ -977,7 +977,72 @@ function hasImageFormat() {
   return clipboard?.kind === "image";
 }
 
+// presentationSettings.ts
+var PRESENTATION_LIMITS = {
+  intervalSec: { min: 2, max: 30 },
+  fadeMs: { min: 200, max: 3e3 },
+  kenBurnsStrength: { min: 0, max: 100 }
+};
+var DEFAULT_PRESENTATION_SETTINGS = {
+  intervalSec: 7,
+  fadeMs: 1200,
+  kenBurnsStrength: 100,
+  auras: true,
+  sparkles: true,
+  transition: "dissolve",
+  paletteBg: true,
+  vignette: true,
+  letterbox: true
+};
+function normalizePresentationTransition(value) {
+  if (value === "zoom" || value === "slide" || value === "dissolve") return value;
+  return DEFAULT_PRESENTATION_SETTINGS.transition;
+}
+function normalizePresentationSettings(partial) {
+  const p = partial ?? {};
+  const L = PRESENTATION_LIMITS;
+  const intervalSec = clamp2(
+    Number(p.intervalSec ?? DEFAULT_PRESENTATION_SETTINGS.intervalSec),
+    L.intervalSec.min,
+    L.intervalSec.max
+  );
+  const fadeMs = clamp2(
+    Math.round(Number(p.fadeMs ?? DEFAULT_PRESENTATION_SETTINGS.fadeMs)),
+    L.fadeMs.min,
+    L.fadeMs.max
+  );
+  const kenBurnsStrength = clamp2(
+    Math.round(
+      Number(
+        p.kenBurnsStrength ?? DEFAULT_PRESENTATION_SETTINGS.kenBurnsStrength
+      )
+    ),
+    L.kenBurnsStrength.min,
+    L.kenBurnsStrength.max
+  );
+  return {
+    intervalSec,
+    fadeMs,
+    kenBurnsStrength,
+    auras: p.auras ?? DEFAULT_PRESENTATION_SETTINGS.auras,
+    sparkles: p.sparkles ?? DEFAULT_PRESENTATION_SETTINGS.sparkles,
+    transition: normalizePresentationTransition(p.transition),
+    paletteBg: p.paletteBg ?? DEFAULT_PRESENTATION_SETTINGS.paletteBg,
+    vignette: p.vignette ?? DEFAULT_PRESENTATION_SETTINGS.vignette,
+    letterbox: p.letterbox ?? DEFAULT_PRESENTATION_SETTINGS.letterbox
+  };
+}
+function clamp2(n, min, max) {
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
+
 // ImageStylePanel.ts
+var PRESENTATION_TRANSITION_OPTIONS = [
+  { value: "dissolve", label: "\u0420\u0430\u0441\u0442\u0432\u043E\u0440\u0435\u043D\u0438\u0435" },
+  { value: "zoom", label: "\u041D\u0430\u043F\u043B\u044B\u0432" },
+  { value: "slide", label: "\u0421\u0434\u0432\u0438\u0433" }
+];
 function toTransparency(opacity) {
   return Math.min(100, Math.max(0, 100 - opacity));
 }
@@ -1001,7 +1066,8 @@ var ImageStylePanel = class {
     (0, import_obsidian.setIcon)(closeBtn, "x");
     closeBtn.addEventListener("click", () => this.hide());
     const body = this.el.createDiv({ cls: "intuition-panel__body" });
-    const opacityRow = body.createDiv({ cls: "intuition-panel__row" });
+    const styleAcc = this.createAccordion(body, "\u0421\u0442\u0438\u043B\u044C", true);
+    const opacityRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
     opacityRow.createSpan({
       text: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C",
       cls: "intuition-panel__label"
@@ -1014,7 +1080,7 @@ var ImageStylePanel = class {
     const transparencyValue = opacityWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const colorRow = body.createDiv({ cls: "intuition-panel__row" });
+    const colorRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
     colorRow.createSpan({
       text: "\u0426\u0432\u0435\u0442 \u043E\u0431\u0432\u043E\u0434\u043A\u0438",
       cls: "intuition-panel__label"
@@ -1023,7 +1089,7 @@ var ImageStylePanel = class {
       type: "color",
       cls: "intuition-panel__color"
     });
-    const widthRow = body.createDiv({ cls: "intuition-panel__row" });
+    const widthRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
     widthRow.createSpan({
       text: "\u0428\u0438\u0440\u0438\u043D\u0430",
       cls: "intuition-panel__label"
@@ -1036,7 +1102,7 @@ var ImageStylePanel = class {
     const borderWidthValue = widthWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const radiusRow = body.createDiv({ cls: "intuition-panel__row" });
+    const radiusRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
     radiusRow.createSpan({
       text: "\u0421\u043A\u0440\u0443\u0433\u043B\u0435\u043D\u0438\u0435",
       cls: "intuition-panel__label"
@@ -1049,7 +1115,7 @@ var ImageStylePanel = class {
     const borderRadiusValue = radiusWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const styleRow = body.createDiv({ cls: "intuition-panel__row" });
+    const styleRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
     styleRow.createSpan({
       text: "\u0421\u0442\u0438\u043B\u044C",
       cls: "intuition-panel__label"
@@ -1060,21 +1126,22 @@ var ImageStylePanel = class {
     for (const opt of BORDER_STYLE_OPTIONS) {
       borderStyle.createEl("option", { text: opt.label, value: opt.value });
     }
-    const auraRow = body.createDiv({ cls: "intuition-panel__row" });
+    const auraAcc = this.createAccordion(body, "\u0410\u0443\u0440\u0430", false);
+    const auraRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
     auraRow.createSpan({ text: "\u0410\u0443\u0440\u0430", cls: "intuition-panel__label" });
     const auraLabel = auraRow.createEl("label", {
       cls: "intuition-text-panel__toggle"
     });
     const aura = auraLabel.createEl("input", { type: "checkbox" });
     auraLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
-    const shimmerRow = body.createDiv({ cls: "intuition-panel__row" });
+    const shimmerRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
     shimmerRow.createSpan({ text: "\u041F\u0435\u0440\u0435\u043B\u0438\u0432", cls: "intuition-panel__label" });
     const shimmerLabel = shimmerRow.createEl("label", {
       cls: "intuition-text-panel__toggle"
     });
     const auraShimmer = shimmerLabel.createEl("input", { type: "checkbox" });
     shimmerLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
-    const auraStrengthRow = body.createDiv({ cls: "intuition-panel__row" });
+    const auraStrengthRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
     auraStrengthRow.createSpan({
       text: "\u0421\u0438\u043B\u0430 \u0430\u0443\u0440\u044B",
       cls: "intuition-panel__label"
@@ -1089,7 +1156,7 @@ var ImageStylePanel = class {
     const auraStrengthValue = auraStrengthWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const auraSizeRow = body.createDiv({ cls: "intuition-panel__row" });
+    const auraSizeRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
     auraSizeRow.createSpan({
       text: "\u041F\u043B\u043E\u0449\u0430\u0434\u044C",
       cls: "intuition-panel__label"
@@ -1104,7 +1171,7 @@ var ImageStylePanel = class {
     const auraSizeValue = auraSizeWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const auraColorRow = body.createDiv({ cls: "intuition-panel__row" });
+    const auraColorRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
     auraColorRow.createSpan({
       text: "\u0426\u0432\u0435\u0442 \u0430\u0443\u0440\u044B",
       cls: "intuition-panel__label"
@@ -1114,14 +1181,15 @@ var ImageStylePanel = class {
       cls: "intuition-panel__color",
       attr: { title: "\u0410\u0432\u0442\u043E \u0438\u0437 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438, \u043C\u043E\u0436\u043D\u043E \u043F\u0435\u0440\u0435\u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0438\u0442\u044C" }
     });
-    const tiltRow = body.createDiv({ cls: "intuition-panel__row" });
+    const tiltAcc = this.createAccordion(body, "\u041D\u0430\u043A\u043B\u043E\u043D", false);
+    const tiltRow = tiltAcc.body.createDiv({ cls: "intuition-panel__row" });
     tiltRow.createSpan({ text: "\u041D\u0430\u043A\u043B\u043E\u043D", cls: "intuition-panel__label" });
     const tiltLabel = tiltRow.createEl("label", {
       cls: "intuition-text-panel__toggle"
     });
     const vibeTilt = tiltLabel.createEl("input", { type: "checkbox" });
     tiltLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
-    const tiltStrengthRow = body.createDiv({ cls: "intuition-panel__row" });
+    const tiltStrengthRow = tiltAcc.body.createDiv({ cls: "intuition-panel__row" });
     tiltStrengthRow.createSpan({
       text: "\u0421\u0438\u043B\u0430 \u043D\u0430\u043A\u043B\u043E\u043D\u0430",
       cls: "intuition-panel__label"
@@ -1221,15 +1289,14 @@ var ImageStylePanel = class {
       vibeTiltStrengthValue.setText(`${value}%`);
       this.commit({ vibeTiltStrength: value });
     });
-    this.collageSection = body.createDiv({
-      cls: "intuition-panel__collage"
-    });
+    const collageAcc = this.createAccordion(body, "\u041A\u043E\u043B\u043B\u0430\u0436", true);
+    this.collageSection = collageAcc.section;
     this.collageSection.hide();
-    const collageGapRow = this.collageSection.createDiv({
+    const collageGapRow = collageAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     collageGapRow.createSpan({
-      text: "\u0417\u0430\u0437\u043E\u0440",
+      text: "\u041E\u0442\u0441\u0442\u0443\u043F\u044B",
       cls: "intuition-panel__label"
     });
     const collageGapWrap = collageGapRow.createDiv({
@@ -1241,7 +1308,7 @@ var ImageStylePanel = class {
         min: "0",
         max: String(COLLAGE_GAP_SLIDER_MAX),
         step: "1",
-        "aria-label": "\u0417\u0430\u0437\u043E\u0440 \u043C\u0435\u0436\u0434\u0443 \u0444\u043E\u0442\u043E"
+        "aria-label": "\u041E\u0442\u0441\u0442\u0443\u043F\u044B \u043C\u0435\u0436\u0434\u0443 \u0444\u043E\u0442\u043E"
       }
     });
     this.collageGapPx = collageGapWrap.createEl("input", {
@@ -1251,7 +1318,7 @@ var ImageStylePanel = class {
         min: "0",
         max: String(COLLAGE_GAP_MAX),
         step: "1",
-        "aria-label": "\u0417\u0430\u0437\u043E\u0440 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445"
+        "aria-label": "\u041E\u0442\u0441\u0442\u0443\u043F\u044B \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445"
       }
     });
     const applyGap = (raw) => {
@@ -1274,7 +1341,7 @@ var ImageStylePanel = class {
         this.collageGapPx.blur();
       }
     });
-    const collageGridRow = this.collageSection.createDiv({
+    const collageGridRow = collageAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     collageGridRow.createSpan({
@@ -1294,7 +1361,7 @@ var ImageStylePanel = class {
         axis === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B"
       );
     });
-    const collageCountRow = this.collageSection.createDiv({
+    const collageCountRow = collageAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     this.collageCountLabel = collageCountRow.createSpan({
@@ -1336,7 +1403,7 @@ var ImageStylePanel = class {
     const commitCount = () => applyCount(Number(this.collageCount.value));
     this.collageCount.addEventListener("change", commitCount);
     this.collageCount.addEventListener("blur", commitCount);
-    const collageApplyRow = this.collageSection.createDiv({
+    const collageApplyRow = collageAcc.body.createDiv({
       cls: "intuition-panel__row intuition-panel__row--full"
     });
     const arrangeBtn = collageApplyRow.createEl("button", {
@@ -1344,9 +1411,179 @@ var ImageStylePanel = class {
       text: "\u0412 \u0441\u0435\u0442\u043A\u0443"
     });
     arrangeBtn.addEventListener("click", () => this.collageHooks?.onArrange());
-    this.presentSection = body.createDiv({
-      cls: "intuition-panel__row intuition-panel__row--full intuition-panel__present"
+    this.presentSection = body.createDiv({ cls: "intuition-panel__present" });
+    const presentL = PRESENTATION_LIMITS;
+    const presentTimingAcc = this.createAccordion(
+      this.presentSection,
+      "\u0422\u0430\u0439\u043C\u0438\u043D\u0433",
+      true
+    );
+    const intervalRow = presentTimingAcc.body.createDiv({
+      cls: "intuition-panel__row"
     });
+    intervalRow.createSpan({ text: "\u0418\u043D\u0442\u0435\u0440\u0432\u0430\u043B", cls: "intuition-panel__label" });
+    const intervalWrap = intervalRow.createDiv({ cls: "intuition-panel__size" });
+    const presentInterval = intervalWrap.createEl("input", {
+      type: "range",
+      attr: {
+        min: String(presentL.intervalSec.min),
+        max: String(presentL.intervalSec.max),
+        step: "1",
+        "aria-label": "\u0418\u043D\u0442\u0435\u0440\u0432\u0430\u043B \u043C\u0435\u0436\u0434\u0443 \u0441\u043B\u0430\u0439\u0434\u0430\u043C\u0438"
+      }
+    });
+    const presentIntervalValue = intervalWrap.createSpan({
+      cls: "intuition-panel__value"
+    });
+    const fadeRow = presentTimingAcc.body.createDiv({
+      cls: "intuition-panel__row"
+    });
+    fadeRow.createSpan({ text: "\u041F\u043B\u0430\u0432\u043D\u043E\u0441\u0442\u044C", cls: "intuition-panel__label" });
+    const fadeWrap = fadeRow.createDiv({ cls: "intuition-panel__size" });
+    const presentFade = fadeWrap.createEl("input", {
+      type: "range",
+      attr: {
+        min: String(presentL.fadeMs.min),
+        max: String(presentL.fadeMs.max),
+        step: "50",
+        "aria-label": "\u0414\u043B\u0438\u0442\u0435\u043B\u044C\u043D\u043E\u0441\u0442\u044C \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430"
+      }
+    });
+    const presentFadeValue = fadeWrap.createSpan({
+      cls: "intuition-panel__value"
+    });
+    const presentTransitionsAcc = this.createAccordion(
+      this.presentSection,
+      "\u041F\u0435\u0440\u0435\u0445\u043E\u0434\u044B",
+      false
+    );
+    const kbRow = presentTransitionsAcc.body.createDiv({
+      cls: "intuition-panel__row"
+    });
+    kbRow.createSpan({ text: "\u041A\u0435\u043D \u0411\u0451\u0440\u043D\u0441", cls: "intuition-panel__label" });
+    const kbWrap = kbRow.createDiv({ cls: "intuition-panel__size" });
+    const presentKenBurns = kbWrap.createEl("input", {
+      type: "range",
+      attr: {
+        min: String(presentL.kenBurnsStrength.min),
+        max: String(presentL.kenBurnsStrength.max),
+        step: "1",
+        "aria-label": "\u0421\u0438\u043B\u0430 \u044D\u0444\u0444\u0435\u043A\u0442\u0430 \u041A\u0435\u043D \u0411\u0451\u0440\u043D\u0441"
+      }
+    });
+    const presentKenBurnsValue = kbWrap.createSpan({
+      cls: "intuition-panel__value"
+    });
+    const transitionRow = presentTransitionsAcc.body.createDiv({
+      cls: "intuition-panel__row"
+    });
+    transitionRow.createSpan({ text: "\u041F\u0435\u0440\u0435\u0445\u043E\u0434", cls: "intuition-panel__label" });
+    const presentTransition = transitionRow.createEl("select", {
+      cls: "dropdown intuition-panel__select",
+      attr: { "aria-label": "\u0422\u0438\u043F \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430 \u043C\u0435\u0436\u0434\u0443 \u0441\u043B\u0430\u0439\u0434\u0430\u043C\u0438" }
+    });
+    for (const opt of PRESENTATION_TRANSITION_OPTIONS) {
+      presentTransition.createEl("option", {
+        text: opt.label,
+        value: opt.value
+      });
+    }
+    const presentEffectsAcc = this.createAccordion(
+      this.presentSection,
+      "\u042D\u0444\u0444\u0435\u043A\u0442\u044B",
+      false
+    );
+    const makePresentToggleRow = (label, aria) => {
+      const row = presentEffectsAcc.body.createDiv({
+        cls: "intuition-panel__row"
+      });
+      row.createSpan({ text: label, cls: "intuition-panel__label" });
+      const toggleLabel = row.createEl("label", {
+        cls: "intuition-text-panel__toggle"
+      });
+      const input = toggleLabel.createEl("input", {
+        type: "checkbox",
+        attr: { "aria-label": aria }
+      });
+      toggleLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
+      return input;
+    };
+    const presentAuras = makePresentToggleRow("\u0410\u0443\u0440\u044B", "\u0410\u0443\u0440\u044B \u0432 \u0441\u043B\u0430\u0439\u0434\u0448\u043E\u0443");
+    const presentSparkles = makePresentToggleRow(
+      "\u0411\u043B\u0435\u0441\u0442\u043A\u0438",
+      "\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0432 \u0441\u043B\u0430\u0439\u0434\u0448\u043E\u0443"
+    );
+    const presentPaletteBg = makePresentToggleRow(
+      "\u0424\u043E\u043D-\u043F\u0430\u043B\u0438\u0442\u0440\u0430",
+      "\u0424\u043E\u043D \u0438\u0437 \u043F\u0430\u043B\u0438\u0442\u0440\u044B \u0444\u043E\u0442\u043E"
+    );
+    const presentVignette = makePresentToggleRow(
+      "\u0412\u0438\u043D\u044C\u0435\u0442\u043A\u0430",
+      "\u0412\u0438\u043D\u044C\u0435\u0442\u043A\u0430 \u043F\u043E \u043A\u0440\u0430\u044F\u043C \u043A\u0430\u0434\u0440\u0430"
+    );
+    const presentLetterbox = makePresentToggleRow(
+      "\u041B\u0435\u0442\u0442\u0435\u0440\u0431\u043E\u043A\u0441",
+      "\u0427\u0451\u0440\u043D\u044B\u0435 \u043F\u043E\u043B\u044F \u0441\u0432\u0435\u0440\u0445\u0443 \u0438 \u0441\u043D\u0438\u0437\u0443"
+    );
+    this.presentInputs = {
+      interval: presentInterval,
+      intervalValue: presentIntervalValue,
+      fade: presentFade,
+      fadeValue: presentFadeValue,
+      kenBurns: presentKenBurns,
+      kenBurnsValue: presentKenBurnsValue,
+      transition: presentTransition,
+      auras: presentAuras,
+      sparkles: presentSparkles,
+      paletteBg: presentPaletteBg,
+      vignette: presentVignette,
+      letterbox: presentLetterbox
+    };
+    for (const range of [presentInterval, presentFade, presentKenBurns]) {
+      range.addEventListener("pointerdown", (e) => e.stopPropagation());
+      range.addEventListener("click", (e) => e.stopPropagation());
+    }
+    presentInterval.addEventListener("input", () => {
+      const value = Number(presentInterval.value);
+      presentIntervalValue.setText(`${value}\u0441`);
+      this.commitPresentation({ intervalSec: value });
+    });
+    presentFade.addEventListener("input", () => {
+      const value = Number(presentFade.value);
+      presentFadeValue.setText(`${value}\u043C\u0441`);
+      this.commitPresentation({ fadeMs: value });
+    });
+    presentKenBurns.addEventListener("input", () => {
+      const value = Number(presentKenBurns.value);
+      presentKenBurnsValue.setText(`${value}%`);
+      this.commitPresentation({ kenBurnsStrength: value });
+    });
+    presentTransition.addEventListener(
+      "change",
+      () => this.commitPresentation({
+        transition: normalizePresentationTransition(presentTransition.value)
+      })
+    );
+    presentAuras.addEventListener(
+      "change",
+      () => this.commitPresentation({ auras: presentAuras.checked })
+    );
+    presentSparkles.addEventListener(
+      "change",
+      () => this.commitPresentation({ sparkles: presentSparkles.checked })
+    );
+    presentPaletteBg.addEventListener(
+      "change",
+      () => this.commitPresentation({ paletteBg: presentPaletteBg.checked })
+    );
+    presentVignette.addEventListener(
+      "change",
+      () => this.commitPresentation({ vignette: presentVignette.checked })
+    );
+    presentLetterbox.addEventListener(
+      "change",
+      () => this.commitPresentation({ letterbox: presentLetterbox.checked })
+    );
     this.presentBtn = this.presentSection.createEl("button", {
       cls: "mod-cta intuition-panel__reset",
       text: "\u0421\u043B\u0430\u0439\u0434\u0448\u043E\u0443",
@@ -1396,6 +1633,43 @@ var ImageStylePanel = class {
       this.style = { ...DEFAULT_IMAGE_STYLE };
       this.syncInputs();
     });
+  }
+  /** Collapsible category, same markup/behavior as the vibe panel's accordions. */
+  createAccordion(parent, title, open) {
+    const section = parent.createDiv({
+      cls: "intuition-vibe-panel__accordion"
+    });
+    if (open) section.addClass("is-open");
+    const head = section.createDiv({
+      cls: "intuition-vibe-panel__accordion-head",
+      attr: { role: "button", tabindex: "0" }
+    });
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    const chevron = head.createSpan({
+      cls: "intuition-vibe-panel__accordion-chevron"
+    });
+    (0, import_obsidian.setIcon)(chevron, "chevron-right");
+    head.createSpan({ cls: "intuition-vibe-panel__accordion-title", text: title });
+    const contentBody = section.createDiv({
+      cls: "intuition-vibe-panel__accordion-body"
+    });
+    const toggle = () => {
+      const next = !section.hasClass("is-open");
+      section.toggleClass("is-open", next);
+      head.setAttribute("aria-expanded", next ? "true" : "false");
+    };
+    head.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggle();
+    });
+    head.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+    return { section, body: contentBody, head };
   }
   setCollageHooks(hooks) {
     this.collageHooks = hooks;
@@ -1511,8 +1785,36 @@ var ImageStylePanel = class {
   }
   syncPresentControls() {
     const show = this.nodes.length >= 1 && !!this.collageHooks?.onPresent;
-    if (show) this.presentSection.show();
-    else this.presentSection.hide();
+    if (show) {
+      this.presentSection.show();
+      this.syncPresentSettings();
+    } else {
+      this.presentSection.hide();
+    }
+  }
+  syncPresentSettings() {
+    if (!this.collageHooks?.getPresentation) return;
+    const cfg = normalizePresentationSettings(
+      this.collageHooks.getPresentation()
+    );
+    const i = this.presentInputs;
+    i.interval.value = String(cfg.intervalSec);
+    i.intervalValue.setText(`${cfg.intervalSec}\u0441`);
+    i.fade.value = String(cfg.fadeMs);
+    i.fadeValue.setText(`${cfg.fadeMs}\u043C\u0441`);
+    i.kenBurns.value = String(cfg.kenBurnsStrength);
+    i.kenBurnsValue.setText(`${cfg.kenBurnsStrength}%`);
+    i.transition.value = cfg.transition;
+    i.auras.checked = cfg.auras;
+    i.sparkles.checked = cfg.sparkles;
+    i.paletteBg.checked = cfg.paletteBg;
+    i.vignette.checked = cfg.vignette;
+    i.letterbox.checked = cfg.letterbox;
+  }
+  commitPresentation(partial) {
+    if (!this.collageHooks?.onPresentationChange) return;
+    this.collageHooks.onPresentationChange(partial);
+    this.syncPresentSettings();
   }
   syncInputs() {
     const transparency = toTransparency(this.style.opacity);
@@ -2298,7 +2600,7 @@ function normalizeCanvasChrome(partial) {
       p.dotColor ?? DEFAULT_CANVAS_CHROME.dotColor,
       DEFAULT_CANVAS_CHROME.dotColor
     ),
-    dotOpacity: clamp2(p.dotOpacity ?? DEFAULT_CANVAS_CHROME.dotOpacity, 0, 100)
+    dotOpacity: clamp3(p.dotOpacity ?? DEFAULT_CANVAS_CHROME.dotOpacity, 0, 100)
   };
 }
 function hexToRgba2(hex, opacityPct) {
@@ -2385,7 +2687,7 @@ function sampleCanvasBackground(root) {
   const bg = getComputedStyle(target).backgroundColor || getComputedStyle(document.body).getPropertyValue("--canvas-background") || getComputedStyle(document.body).getPropertyValue("--background-primary");
   return rgbStringToHex(bg.trim()) || "#1e1f24";
 }
-function clamp2(n, min, max) {
+function clamp3(n, min, max) {
   if (!Number.isFinite(n)) return min;
   return Math.min(max, Math.max(min, n));
 }
@@ -2584,6 +2886,10 @@ var VibeTiltController = class {
     /** When true, don't toggle body/leaf vibe classes (presentation overlay). */
     this.isolateGlobalClass = false;
     this.glareEnabled = true;
+    /** Reacts to is-selected/is-focused toggles independent of pointer events —
+     * catches selection made via click-through on media controls, keyboard,
+     * or any path that never reaches our pointerdown listener. */
+    this.selectionObserver = null;
     /** Soft drop-shadow on the text content layer (not the card chrome). */
     this.textGlowFadeTimers = /* @__PURE__ */ new WeakMap();
   }
@@ -2628,9 +2934,41 @@ var VibeTiltController = class {
       if (this.enabled) this.clearAllEffects();
     };
     root.addEventListener("pointermove", this.onMove, { passive: true });
-    root.addEventListener("pointerdown", this.onDown, { passive: true });
+    root.addEventListener("pointerdown", this.onDown, {
+      passive: true,
+      capture: true
+    });
     window.addEventListener("pointerup", this.onUp, { passive: true });
     root.addEventListener("pointerleave", this.onLeave, { passive: true });
+    if (typeof MutationObserver !== "undefined") {
+      this.selectionObserver = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          const target = m.target;
+          if (!target.classList?.contains("canvas-node")) continue;
+          if (target.classList.contains("is-selected") || target.classList.contains("is-focused")) {
+            this.disableTiltForNode(target);
+          }
+        }
+      });
+      this.selectionObserver.observe(root, {
+        attributes: true,
+        attributeFilter: ["class"],
+        subtree: true
+      });
+    }
+  }
+  /** Immediately zero tilt/glare/text-glow for one canvas node (selection path). */
+  disableTiltForNode(node) {
+    const container = node.querySelector(".canvas-node-container") ?? node;
+    this.resetCard(container);
+    this.resetTextGlow(node);
+  }
+  /** Selected/focused nodes are being manipulated by the user — no tilt/glow.
+   * Walk up to the actual `.canvas-node` in case the tracked element is a
+   * descendant/wrapper rather than the node itself. */
+  isNodeSelected(node) {
+    const canvasNodeEl = node.closest(".canvas-node") ?? node;
+    return canvasNodeEl.classList.contains("is-selected") || canvasNodeEl.classList.contains("is-focused");
   }
   setEnabled(on) {
     this.enabled = on;
@@ -2672,9 +3010,15 @@ var VibeTiltController = class {
     return this.enabled;
   }
   destroy() {
+    this.selectionObserver?.disconnect();
+    this.selectionObserver = null;
     if (this.root && this.onMove) {
       this.root.removeEventListener("pointermove", this.onMove);
-      if (this.onDown) this.root.removeEventListener("pointerdown", this.onDown);
+      if (this.onDown) {
+        this.root.removeEventListener("pointerdown", this.onDown, {
+          capture: true
+        });
+      }
       if (this.onLeave) this.root.removeEventListener("pointerleave", this.onLeave);
       this.root.removeAttribute(HOOK_ATTR);
       this.root.classList.remove("intuition-canvas-vibe");
@@ -2730,19 +3074,17 @@ var VibeTiltController = class {
     const keep = /* @__PURE__ */ new Set();
     for (const card of cards) {
       const { el: node, kind } = card;
+      const isSelected = this.isNodeSelected(node);
       if (kind === "text") {
-        if (this.textStrength > 0.01 && this.isPointerOverTextGlyphs(node, clientX, clientY)) {
+        if (!isSelected && this.textStrength > 0.01 && this.isPointerOverTextGlyphs(node, clientX, clientY)) {
           this.paintTextGlow(node);
         } else {
           this.resetTextGlow(node);
         }
         continue;
       }
-      if (node.dataset.intuitionNoTilt === "1") {
-        const c = node.querySelector(
-          ".canvas-node-container"
-        );
-        if (c) this.resetCard(c);
+      if (isSelected || node.dataset.intuitionNoTilt === "1") {
+        this.disableTiltForNode(node);
         continue;
       }
       const localMul = readTiltStrengthMul(node);
@@ -3019,25 +3361,25 @@ function normalizeSparkleConfig(partial) {
   const p = partial ?? {};
   const L = SPARKLE_LIMITS;
   return {
-    amount: clamp3(p.amount ?? DEFAULT_SPARKLE_CONFIG.amount, L.amount.min, L.amount.max),
-    frequency: clamp3(
+    amount: clamp4(p.amount ?? DEFAULT_SPARKLE_CONFIG.amount, L.amount.min, L.amount.max),
+    frequency: clamp4(
       p.frequency ?? DEFAULT_SPARKLE_CONFIG.frequency,
       L.frequency.min,
       L.frequency.max
     ),
-    size: clamp3(p.size ?? DEFAULT_SPARKLE_CONFIG.size, L.size.min, L.size.max),
-    lifetime: clamp3(
+    size: clamp4(p.size ?? DEFAULT_SPARKLE_CONFIG.size, L.size.min, L.size.max),
+    lifetime: clamp4(
       p.lifetime ?? DEFAULT_SPARKLE_CONFIG.lifetime,
       L.lifetime.min,
       L.lifetime.max
     ),
     color: normalizeHex3(p.color ?? DEFAULT_SPARKLE_CONFIG.color),
-    opacity: clamp3(
+    opacity: clamp4(
       p.opacity ?? DEFAULT_SPARKLE_CONFIG.opacity,
       L.opacity.min,
       L.opacity.max
     ),
-    drift: clamp3(p.drift ?? DEFAULT_SPARKLE_CONFIG.drift, L.drift.min, L.drift.max)
+    drift: clamp4(p.drift ?? DEFAULT_SPARKLE_CONFIG.drift, L.drift.min, L.drift.max)
   };
 }
 function migrateLegacySparkleConfig(partial) {
@@ -3482,7 +3824,7 @@ function drawStar(ctx, x, y, size, rot, alpha, color) {
   ctx.fill(STAR_PATH);
   ctx.restore();
 }
-function clamp3(n, min, max) {
+function clamp4(n, min, max) {
   if (!Number.isFinite(n)) return min;
   return Math.min(max, Math.max(min, n));
 }
@@ -3570,16 +3912,16 @@ var FpsOverlay = class {
 // photoPresentation.ts
 var ROOT_CLS = "intuition-photo-presentation";
 var ROOT_ATTR = "data-intuition-photo-presentation";
-var DEFAULTS = {
-  intervalMs: 7e3,
-  fadeMs: 1200,
-  kenBurns: true
-};
 var KEN_BURNS_VARIANTS = [
   "intuition-kb-a",
   "intuition-kb-b",
   "intuition-kb-c",
   "intuition-kb-d"
+];
+var TX_CLASSES = [
+  `${ROOT_CLS}__layer--tx-prep`,
+  `${ROOT_CLS}__layer--tx-zoom-out`,
+  `${ROOT_CLS}__layer--tx-slide-out`
 ];
 var PhotoPresentation = class {
   constructor() {
@@ -3597,9 +3939,13 @@ var PhotoPresentation = class {
     this.index = 0;
     this.usingA = true;
     this.timer = 0;
-    this.fadeMs = DEFAULTS.fadeMs;
-    this.intervalMs = DEFAULTS.intervalMs;
-    this.kenBurns = DEFAULTS.kenBurns;
+    this.fadeMs = DEFAULT_PRESENTATION_SETTINGS.fadeMs;
+    this.intervalMs = DEFAULT_PRESENTATION_SETTINGS.intervalSec * 1e3;
+    this.kenBurnsStrength = DEFAULT_PRESENTATION_SETTINGS.kenBurnsStrength;
+    this.aurasEnabled = true;
+    this.sparklesEnabled = true;
+    this.paletteBg = true;
+    this.transition = "dissolve";
     this.onClose = null;
     this.keyHandler = null;
     this.closed = true;
@@ -3609,6 +3955,8 @@ var PhotoPresentation = class {
     this.sparkleAnchor = null;
     this.hostEl = null;
     this.kbClearTimer = 0;
+    this.sparklesConfig = null;
+    this.tiltStrength = 50;
   }
   isActive() {
     return !this.closed && !!this.root;
@@ -3621,12 +3969,16 @@ var PhotoPresentation = class {
     this.slides = clean;
     this.index = 0;
     this.usingA = true;
-    this.intervalMs = Math.max(
-      1500,
-      options.intervalMs ?? DEFAULTS.intervalMs
-    );
-    this.fadeMs = Math.max(200, options.fadeMs ?? DEFAULTS.fadeMs);
-    this.kenBurns = options.kenBurns ?? DEFAULTS.kenBurns;
+    const cfg = normalizePresentationSettings(options.settings);
+    this.intervalMs = Math.round(cfg.intervalSec * 1e3);
+    this.fadeMs = cfg.fadeMs;
+    this.kenBurnsStrength = cfg.kenBurnsStrength;
+    this.aurasEnabled = cfg.auras;
+    this.sparklesEnabled = cfg.sparkles;
+    this.paletteBg = cfg.paletteBg;
+    this.transition = normalizePresentationTransition(cfg.transition);
+    this.sparklesConfig = options.sparklesConfig ?? null;
+    this.tiltStrength = typeof options.tiltStrength === "number" && Number.isFinite(options.tiltStrength) ? options.tiltStrength : 50;
     this.onClose = options.onClose ?? null;
     const root = document.createElement("div");
     root.className = ROOT_CLS;
@@ -3634,6 +3986,10 @@ var PhotoPresentation = class {
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
     root.setAttribute("aria-label", "Photo presentation");
+    root.dataset.transition = this.transition;
+    root.classList.toggle(`${ROOT_CLS}--palette-bg`, this.paletteBg);
+    root.classList.toggle(`${ROOT_CLS}--vignette`, cfg.vignette);
+    root.classList.toggle(`${ROOT_CLS}--letterbox`, cfg.letterbox);
     root.style.setProperty("--intuition-present-fade", `${this.fadeMs}ms`);
     root.style.setProperty(
       "--intuition-present-hold",
@@ -3676,6 +4032,14 @@ var PhotoPresentation = class {
     sparkleAnchor.setAttribute("aria-hidden", "true");
     stage.appendChild(sparkleAnchor);
     this.sparkleAnchor = sparkleAnchor;
+    const letterbox = document.createElement("div");
+    letterbox.className = `${ROOT_CLS}__letterbox`;
+    letterbox.setAttribute("aria-hidden", "true");
+    stage.appendChild(letterbox);
+    const vignette = document.createElement("div");
+    vignette.className = `${ROOT_CLS}__vignette`;
+    vignette.setAttribute("aria-hidden", "true");
+    stage.appendChild(vignette);
     const chrome = document.createElement("div");
     chrome.className = `${ROOT_CLS}__chrome`;
     const meta = document.createElement("div");
@@ -3709,27 +4073,29 @@ var PhotoPresentation = class {
     this.root = root;
     this.hostEl = host;
     host.classList.add("intuition-photo-presentation-active");
-    this.sparkles = new VibeSparkleController();
-    this.sparkles.attach(root, {
-      getSuspended: () => false,
-      getSelectionCount: () => 0,
-      getZoom: () => 1
-    });
-    this.sparkles.setCardHosts(
-      () => this.sparkleAnchor?.isConnected ? [this.sparkleAnchor] : []
-    );
-    this.sparkles.setSpawnAroundCenter(true);
-    const sparkleBase = normalizeSparkleConfig(
-      options.sparkles ?? DEFAULT_SPARKLE_CONFIG
-    );
-    this.sparkles.setConfig({
-      ...sparkleBase,
-      amount: Math.min(500, Math.round(sparkleBase.amount * 2.4)),
-      frequency: Math.min(200, Math.round(sparkleBase.frequency * 2)),
-      size: Math.min(48, Math.round(sparkleBase.size * 1.2)),
-      opacity: Math.min(100, Math.round(sparkleBase.opacity * 1.05))
-    });
-    this.sparkles.setEnabled(true);
+    if (this.sparklesEnabled) {
+      this.sparkles = new VibeSparkleController();
+      this.sparkles.attach(root, {
+        getSuspended: () => false,
+        getSelectionCount: () => 0,
+        getZoom: () => 1
+      });
+      this.sparkles.setCardHosts(
+        () => this.sparkleAnchor?.isConnected ? [this.sparkleAnchor] : []
+      );
+      this.sparkles.setSpawnAroundCenter(true);
+      const sparkleBase = normalizeSparkleConfig(
+        this.sparklesConfig ?? DEFAULT_SPARKLE_CONFIG
+      );
+      this.sparkles.setConfig({
+        ...sparkleBase,
+        amount: Math.min(500, Math.round(sparkleBase.amount * 2.4)),
+        frequency: Math.min(200, Math.round(sparkleBase.frequency * 2)),
+        size: Math.min(48, Math.round(sparkleBase.size * 1.2)),
+        opacity: Math.min(100, Math.round(sparkleBase.opacity * 1.05))
+      });
+      this.sparkles.setEnabled(true);
+    }
     this.tilt = new VibeTiltController();
     this.tilt.attach(root, {
       getSuspended: () => false,
@@ -3739,9 +4105,7 @@ var PhotoPresentation = class {
       isolateGlobalClass: true,
       glareEnabled: false
     });
-    this.tilt.setStrength(
-      typeof options.tiltStrength === "number" && Number.isFinite(options.tiltStrength) ? options.tiltStrength : 50
-    );
+    this.tilt.setStrength(this.tiltStrength);
     this.tilt.setEnabled(true);
     this.keyHandler = (ev) => {
       if (this.closed) return;
@@ -3779,8 +4143,6 @@ var PhotoPresentation = class {
       window.removeEventListener("keydown", this.keyHandler, true);
       this.keyHandler = null;
     }
-    if (this.frameA) removeAuraLayer(this.frameA);
-    if (this.frameB) removeAuraLayer(this.frameB);
     if (this.motionA) removeAuraLayer(this.motionA);
     if (this.motionB) removeAuraLayer(this.motionB);
     this.sparkles?.destroy();
@@ -3847,18 +4209,22 @@ var PhotoPresentation = class {
     if (!animate) {
       this.clearKenBurns(this.layerA);
       this.clearKenBurns(this.layerB);
+      this.clearLayerTransition(this.layerA);
+      this.clearLayerTransition(this.layerB);
       this.imgA.src = slide.src;
       this.imgA.alt = slide.label ?? "";
-      this.layerA.style.opacity = "1";
-      this.layerB.style.opacity = "0";
       this.layerA.classList.add(`${ROOT_CLS}__layer--in`);
       this.layerA.classList.remove(`${ROOT_CLS}__layer--out`);
       this.layerB.classList.add(`${ROOT_CLS}__layer--out`);
       this.layerB.classList.remove(`${ROOT_CLS}__layer--in`);
-      if (this.kenBurns) {
-        this.applyKenBurns(this.layerA, this.motionA, index);
+      this.layerA.style.opacity = "1";
+      this.layerA.style.transform = "";
+      this.layerB.style.opacity = "0";
+      this.layerB.style.transform = "";
+      if (this.kenBurnsStrength > 0) {
+        void this.applyKenBurns(this.layerA, this.motionA, this.imgA, index);
       }
-      void this.refreshAura(this.motionA, this.imgA, slide.src);
+      void this.refreshSlideFx(this.motionA, this.imgA, slide.src);
       this.usingA = true;
     } else {
       const incomingImg = this.usingA ? this.imgB : this.imgA;
@@ -3873,17 +4239,22 @@ var PhotoPresentation = class {
       incomingLayer.classList.remove(`${ROOT_CLS}__layer--out`);
       outgoingLayer.classList.add(`${ROOT_CLS}__layer--out`);
       outgoingLayer.classList.remove(`${ROOT_CLS}__layer--in`);
-      incomingLayer.style.opacity = "1";
-      outgoingLayer.style.opacity = "0";
-      if (this.kenBurns) {
-        this.applyKenBurns(incomingLayer, incomingMotion, index);
+      this.runTransition(incomingLayer, outgoingLayer);
+      if (this.kenBurnsStrength > 0) {
+        void this.applyKenBurns(
+          incomingLayer,
+          incomingMotion,
+          incomingImg,
+          index
+        );
       }
-      void this.refreshAura(incomingMotion, incomingImg, slide.src);
+      void this.refreshSlideFx(incomingMotion, incomingImg, slide.src);
       this.usingA = !this.usingA;
       this.kbClearTimer = window.setTimeout(() => {
         this.kbClearTimer = 0;
         if (this.closed) return;
         this.clearKenBurns(outgoingLayer);
+        this.clearLayerTransition(outgoingLayer);
       }, this.fadeMs + 40);
     }
     this.index = index;
@@ -3891,6 +4262,45 @@ var PhotoPresentation = class {
       const label = slide.label ? ` \xB7 ${slide.label}` : "";
       this.metaEl.textContent = `${index + 1} / ${this.slides.length}${label}`;
     }
+  }
+  runTransition(incoming, outgoing) {
+    this.clearLayerTransition(incoming);
+    this.clearLayerTransition(outgoing);
+    const fade = `${this.fadeMs}ms`;
+    incoming.style.transition = "none";
+    outgoing.style.transition = `opacity ${fade} ease, transform ${fade} ease`;
+    if (this.transition === "zoom") {
+      incoming.classList.add(`${ROOT_CLS}__layer--tx-prep`);
+      incoming.style.opacity = "0";
+      incoming.style.transform = "scale(1.08)";
+    } else if (this.transition === "slide") {
+      incoming.classList.add(`${ROOT_CLS}__layer--tx-prep`);
+      incoming.style.opacity = "0";
+      incoming.style.transform = "translateX(7%)";
+    } else {
+      incoming.style.opacity = "0";
+      incoming.style.transform = "";
+    }
+    void incoming.offsetWidth;
+    incoming.style.transition = `opacity ${fade} ease, transform ${fade} ease`;
+    incoming.style.opacity = "1";
+    incoming.style.transform = "none";
+    incoming.classList.remove(`${ROOT_CLS}__layer--tx-prep`);
+    outgoing.style.opacity = "0";
+    if (this.transition === "zoom") {
+      outgoing.classList.add(`${ROOT_CLS}__layer--tx-zoom-out`);
+      outgoing.style.transform = "scale(0.94)";
+    } else if (this.transition === "slide") {
+      outgoing.classList.add(`${ROOT_CLS}__layer--tx-slide-out`);
+      outgoing.style.transform = "translateX(-6%)";
+    } else {
+      outgoing.style.transform = "";
+    }
+  }
+  clearLayerTransition(layer) {
+    for (const c of TX_CLASSES) layer.classList.remove(c);
+    layer.style.transition = "";
+    layer.style.transform = "";
   }
   activeTiltCards() {
     const cards = [];
@@ -3907,12 +4317,17 @@ var PhotoPresentation = class {
     }
     return cards;
   }
-  async refreshAura(host, img, seed) {
+  async refreshSlideFx(host, img, seed) {
     const gen = ++this.auraGen;
     try {
       await waitForImage(img);
       if (this.closed || gen !== this.auraGen) return;
       const palette = extractPalette(img);
+      this.applyPaletteBackground(palette);
+      if (!this.aurasEnabled) {
+        removeAuraLayer(host);
+        return;
+      }
       paintAuraLayer(host, {
         color: palette?.[0] ?? "#7a6bb5",
         palette: palette ?? void 0,
@@ -3923,6 +4338,11 @@ var PhotoPresentation = class {
       });
     } catch {
       if (this.closed || gen !== this.auraGen) return;
+      this.applyPaletteBackground(null);
+      if (!this.aurasEnabled) {
+        removeAuraLayer(host);
+        return;
+      }
       paintAuraLayer(host, {
         color: "#7a6bb5",
         strength: 36,
@@ -3932,15 +4352,48 @@ var PhotoPresentation = class {
       });
     }
   }
-  applyKenBurns(layer, motion, index) {
+  applyPaletteBackground(palette) {
+    if (!this.root || !this.paletteBg) {
+      this.root?.style.removeProperty("--intuition-present-c1");
+      this.root?.style.removeProperty("--intuition-present-c2");
+      this.root?.style.removeProperty("--intuition-present-c3");
+      return;
+    }
+    const c1 = palette?.[0] ?? "#2a2438";
+    const c2 = palette?.[1] ?? palette?.[0] ?? "#1a1524";
+    const c3 = palette?.[2] ?? "#0a0a0b";
+    this.root.style.setProperty("--intuition-present-c1", c1);
+    this.root.style.setProperty("--intuition-present-c2", c2);
+    this.root.style.setProperty("--intuition-present-c3", c3);
+  }
+  async applyKenBurns(layer, motion, img, index) {
+    await waitForImage(img);
+    if (this.closed) return;
+    const amp = this.kenBurnsAmplitude(img);
+    if (amp <= 0.01) {
+      this.clearKenBurns(layer);
+      return;
+    }
     const variant = KEN_BURNS_VARIANTS[index % KEN_BURNS_VARIANTS.length];
     const dur = this.intervalMs + this.fadeMs + 80;
     motion.style.transform = "";
     motion.style.animationName = "";
+    motion.style.setProperty("--intuition-kb-amp", amp.toFixed(3));
     layer.classList.add(variant);
     motion.style.animationDuration = `${dur}ms`;
   }
-  /** Keep the current scale while fading out — avoids a snap shrink. */
+  /** Portrait → weaker zoom; landscape → stronger. Strength 0–100 scales overall. */
+  kenBurnsAmplitude(img) {
+    const base = this.kenBurnsStrength / 100;
+    if (base <= 0) return 0;
+    const w = img.naturalWidth || 1;
+    const h = img.naturalHeight || 1;
+    const ar = w / h;
+    let aspectMul = 1;
+    if (ar < 0.85) aspectMul = 0.55;
+    else if (ar > 1.25) aspectMul = 1.2;
+    return Math.min(1.35, Math.max(0, base * aspectMul));
+  }
   freezeKenBurns(layer) {
     const motion = layer.querySelector(`.${ROOT_CLS}__motion`);
     if (!(motion instanceof HTMLElement)) return;
@@ -3959,6 +4412,7 @@ var PhotoPresentation = class {
       motion.style.animationDuration = "";
       motion.style.animationName = "";
       motion.style.transform = "";
+      motion.style.removeProperty("--intuition-kb-amp");
     }
   }
 };
@@ -4014,7 +4468,8 @@ var DEFAULT_SETTINGS = {
   canvasChrome: {},
   collageGap: 16,
   collagePackAxis: "cols",
-  collageCount: COLLAGE_COUNT_DEFAULT
+  collageCount: COLLAGE_COUNT_DEFAULT,
+  presentation: { ...DEFAULT_PRESENTATION_SETTINGS }
 };
 var VIBE_STRENGTH_SCALE = 2;
 var VIBE_SPARKLE_SCALE = 3;
@@ -4036,6 +4491,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.vibeStrengthSaveTimer = 0;
     this.chromeSaveTimer = 0;
     this.collageGapSaveTimer = 0;
+    this.presentationSaveTimer = 0;
     this.workspaceRefreshTimer = 0;
     this.zoomFarByLeaf = /* @__PURE__ */ new Map();
     this.patchedCanvasViewport = /* @__PURE__ */ new WeakSet();
@@ -4170,6 +4626,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
     if (this.chromeSaveTimer) window.clearTimeout(this.chromeSaveTimer);
     if (this.collageGapSaveTimer) window.clearTimeout(this.collageGapSaveTimer);
+    if (this.presentationSaveTimer) window.clearTimeout(this.presentationSaveTimer);
     if (this.workspaceRefreshTimer) window.clearTimeout(this.workspaceRefreshTimer);
     for (const t of this.panIdleTimers.values()) window.clearTimeout(t);
     this.panIdleTimers.clear();
@@ -4281,6 +4738,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     };
     this.settings.vibeSparkles = prevSparkleScale < VIBE_SPARKLE_SCALE ? migrateLegacySparkleConfig(mergedSparkles) : normalizeSparkleConfig(mergedSparkles);
     this.settings.globalAura = normalizeGlobalAura(raw?.globalAura);
+    this.settings.presentation = normalizePresentationSettings(raw?.presentation);
     this.settings.vibeTextStrength = this.clampVibeTextStrength(
       raw?.vibeTextStrength ?? DEFAULT_SETTINGS.vibeTextStrength
     );
@@ -5409,7 +5867,9 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
         this.syncAllCollageButtons();
       },
       onArrange: () => this.arrangeSelectedImagesCollage(view),
-      onPresent: () => this.startPhotoPresentation(leaf)
+      onPresent: () => this.startPhotoPresentation(leaf),
+      getPresentation: () => this.settings.presentation,
+      onPresentationChange: (partial) => this.patchPresentationSettings(partial)
     });
     this.imagePanels.set(id, panel);
   }
@@ -5591,7 +6051,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     gapRow.className = "intuition-collage-panel__row";
     const gapLabel = document.createElement("span");
     gapLabel.className = "intuition-collage-panel__label";
-    gapLabel.textContent = "\u0417\u0430\u0437\u043E\u0440";
+    gapLabel.textContent = "\u041E\u0442\u0441\u0442\u0443\u043F\u044B";
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
@@ -5601,7 +6061,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     slider.value = String(
       Math.min(COLLAGE_GAP_SLIDER_MAX, clampCollageGap(this.settings.collageGap))
     );
-    slider.setAttribute("aria-label", "\u0417\u0430\u0437\u043E\u0440 \u043C\u0435\u0436\u0434\u0443 \u0444\u043E\u0442\u043E");
+    slider.setAttribute("aria-label", "\u041E\u0442\u0441\u0442\u0443\u043F\u044B \u043C\u0435\u0436\u0434\u0443 \u0444\u043E\u0442\u043E");
     slider.setAttribute("data-collage-gap", "1");
     const gapInput = document.createElement("input");
     gapInput.type = "number";
@@ -5610,7 +6070,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     gapInput.step = "1";
     gapInput.className = "intuition-collage-panel__number";
     gapInput.value = String(clampCollageGap(this.settings.collageGap));
-    gapInput.setAttribute("aria-label", "\u0417\u0430\u0437\u043E\u0440 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445");
+    gapInput.setAttribute("aria-label", "\u041E\u0442\u0441\u0442\u0443\u043F\u044B \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445");
     gapInput.setAttribute("data-collage-gap-px", "1");
     const applyGap = (raw) => {
       const gap = clampCollageGap(raw);
@@ -5779,7 +6239,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     });
     button.setAttribute(
       "aria-label",
-      open ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" : `\u041A\u043E\u043B\u043B\u0430\u0436, \u0437\u0430\u0437\u043E\u0440 ${gap}px`
+      open ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" : `\u041A\u043E\u043B\u043B\u0430\u0436, \u043E\u0442\u0441\u0442\u0443\u043F\u044B ${gap}px`
     );
   }
   syncAllCollageButtons() {
@@ -5806,6 +6266,20 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       this.collageGapSaveTimer = 0;
       void this.saveSettings();
     }, 200);
+  }
+  queuePresentationSettingsSave() {
+    if (this.presentationSaveTimer) window.clearTimeout(this.presentationSaveTimer);
+    this.presentationSaveTimer = window.setTimeout(() => {
+      this.presentationSaveTimer = 0;
+      void this.saveSettings();
+    }, 200);
+  }
+  patchPresentationSettings(partial) {
+    this.settings.presentation = normalizePresentationSettings({
+      ...this.settings.presentation,
+      ...partial
+    });
+    this.queuePresentationSettingsSave();
   }
   /** Full-viewport slideshow for selected images (crossfade + Ken Burns). */
   startPhotoPresentation(leaf) {
@@ -5838,10 +6312,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
       this.photoPresentations.set(id, present);
     }
     const ok = present.start(host, slides, {
-      intervalMs: 7e3,
-      fadeMs: 1200,
-      kenBurns: true,
-      sparkles: this.settings.vibeSparkles,
+      settings: this.settings.presentation,
+      sparklesConfig: this.settings.vibeSparkles,
       /* Half of canvas vibe tilt; no cursor glare in slideshow. */
       tiltStrength: Math.round(
         this.clampVibeStrength(this.settings.vibeStrength) * 0.5
@@ -5917,7 +6389,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     view.canvas?.requestSave?.();
     const axisNote = axis === "rows" ? ` \xB7 ${count} \u0441\u0442\u0440.` : ` \xB7 ${count} \u0441\u0442\u043B\u0431.`;
     new import_obsidian4.Notice(
-      `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u0437\u0430\u0437\u043E\u0440 ${gap}px${axisNote}`,
+      `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u043E\u0442\u0441\u0442\u0443\u043F\u044B ${gap}px${axisNote}`,
       1400
     );
   }
