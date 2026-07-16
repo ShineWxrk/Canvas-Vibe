@@ -3438,9 +3438,13 @@ var FpsOverlay = class {
     this.lastSample = 0;
     this.running = false;
     this.getSparkles = null;
+    this.getZoom = null;
   }
   setSparkleCountProvider(fn) {
     this.getSparkles = fn;
+  }
+  setZoomProvider(fn) {
+    this.getZoom = fn;
   }
   attach(host) {
     if (host.querySelector(`[${ATTR}]`)) {
@@ -3470,7 +3474,10 @@ var FpsOverlay = class {
         const fps = Math.round(this.frames * 1e3 / elapsed);
         if (this.el) {
           const sparks = Math.max(0, Math.round(this.getSparkles?.() ?? 0));
-          this.el.textContent = `${fps} fps \xB7 ${sparks} \u2726`;
+          const zoom = this.getZoom?.() ?? 1;
+          const zoomPct = typeof zoom === "number" && Number.isFinite(zoom) && zoom > 0 ? Math.round(zoom * 100) : null;
+          const zoomLabel = zoomPct != null ? `${zoomPct}%` : "\u2014%";
+          this.el.textContent = `${fps} fps \xB7 ${zoomLabel} \xB7 ${sparks} \u2726`;
         }
         this.frames = 0;
         this.lastSample = now;
@@ -3484,6 +3491,7 @@ var FpsOverlay = class {
     if (this.raf) window.cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.getSparkles = null;
+    this.getZoom = null;
     this.el?.remove();
     this.el = null;
   }
@@ -3568,6 +3576,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     this.panIdleTimers = /* @__PURE__ */ new Map();
     this.zoomIdleTimers = /* @__PURE__ */ new Map();
     this.auraRestartTimers = /* @__PURE__ */ new Map();
+    /** Last sane zoom per canvas — rejects float epsilons (~1e-16) that flicker HUD to 0%. */
+    this.lastGoodZoomByCanvas = /* @__PURE__ */ new WeakMap();
   }
   async onload() {
     await this.loadSettings();
@@ -4269,26 +4279,45 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     const canvas = view.canvas;
     const fromZoom = canvas?.zoom;
     const fromTarget = canvas?.tZoom;
-    if (typeof fromZoom === "number" && Number.isFinite(fromZoom) && fromZoom > 0) {
-      return fromZoom;
+    const lastGood = (canvas ? this.lastGoodZoomByCanvas.get(canvas) : void 0) ?? 1;
+    const MIN_ZOOM = 0.01;
+    const isSane = (z) => typeof z === "number" && Number.isFinite(z) && z >= MIN_ZOOM;
+    let usedFallback = true;
+    let result = lastGood;
+    if (isSane(fromZoom)) {
+      result = fromZoom;
+      usedFallback = false;
+    } else if (isSane(fromTarget)) {
+      result = fromTarget;
+      usedFallback = false;
+    } else {
+      const canvasEl = canvas?.canvasEl ?? view.containerEl.querySelector(".canvas");
+      if (canvasEl) {
+        const scale = readElementScale(canvasEl);
+        if (isSane(scale)) {
+          result = scale;
+          usedFallback = false;
+        }
+      }
+      if (usedFallback) {
+        const hosts = [
+          canvas?.wrapperEl,
+          view.containerEl.querySelector(".canvas-wrapper")
+        ].filter(Boolean);
+        for (const el of hosts) {
+          const scale = readElementScale(el);
+          if (isSane(scale)) {
+            result = scale;
+            usedFallback = false;
+            break;
+          }
+        }
+      }
     }
-    if (typeof fromTarget === "number" && Number.isFinite(fromTarget) && fromTarget > 0) {
-      return fromTarget;
+    if (canvas && isSane(result)) {
+      this.lastGoodZoomByCanvas.set(canvas, result);
     }
-    const canvasEl = canvas?.canvasEl ?? view.containerEl.querySelector(".canvas");
-    if (canvasEl) {
-      const scale = readElementScale(canvasEl);
-      if (scale > 0) return scale;
-    }
-    const hosts = [
-      canvas?.wrapperEl,
-      view.containerEl.querySelector(".canvas-wrapper")
-    ].filter(Boolean);
-    for (const el of hosts) {
-      const scale = readElementScale(el);
-      if (scale > 0) return scale;
-    }
-    return 1;
+    return result;
   }
   ensureFpsOverlay(leaf) {
     const id = leaf.id ?? String(leaf);
@@ -4302,6 +4331,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian4.Plugin {
     fps.setSparkleCountProvider(
       () => this.vibeSparkles.get(id)?.getActiveCount() ?? 0
     );
+    fps.setZoomProvider(() => this.readCanvasZoom(view));
     fps.attach(host);
   }
   ensureVibeController(leaf) {

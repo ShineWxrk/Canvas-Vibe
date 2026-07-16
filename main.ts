@@ -246,6 +246,8 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	private panIdleTimers = new Map<string, number>();
 	private zoomIdleTimers = new Map<string, number>();
 	private auraRestartTimers = new Map<string, number>();
+	/** Last sane zoom per canvas — rejects float epsilons (~1e-16) that flicker HUD to 0%. */
+	private lastGoodZoomByCanvas = new WeakMap<object, number>();
 
 	async onload() {
 		await this.loadSettings();
@@ -1103,36 +1105,61 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		};
 		const fromZoom = canvas?.zoom;
 		const fromTarget = canvas?.tZoom;
-		if (typeof fromZoom === "number" && Number.isFinite(fromZoom) && fromZoom > 0) {
-			return fromZoom;
-		}
-		if (
-			typeof fromTarget === "number" &&
-			Number.isFinite(fromTarget) &&
-			fromTarget > 0
-		) {
-			return fromTarget;
+		const lastGood =
+			(canvas ? this.lastGoodZoomByCanvas.get(canvas) : undefined) ?? 1;
+
+		/**
+		 * Obsidian briefly exposes canvas.zoom / tZoom as float noise (~1e-16)
+		 * at zoom extremes — `> 0` accepts it and the HUD jumps 78%→0%→33%.
+		 * Real canvas zoom in practice stays >= ~6%; reject anything under 1%.
+		 */
+		const MIN_ZOOM = 0.01;
+		const isSane = (z: unknown): z is number =>
+			typeof z === "number" && Number.isFinite(z) && z >= MIN_ZOOM;
+
+		let usedFallback = true;
+		let result = lastGood;
+
+		if (isSane(fromZoom)) {
+			result = fromZoom;
+			usedFallback = false;
+		} else if (isSane(fromTarget)) {
+			result = fromTarget;
+			usedFallback = false;
+		} else {
+			const canvasEl =
+				canvas?.canvasEl ??
+				view.containerEl.querySelector<HTMLElement>(".canvas");
+			if (canvasEl) {
+				const scale = readElementScale(canvasEl);
+				if (isSane(scale)) {
+					result = scale;
+					usedFallback = false;
+				}
+			}
+
+			if (usedFallback) {
+				const hosts = [
+					canvas?.wrapperEl,
+					view.containerEl.querySelector<HTMLElement>(".canvas-wrapper"),
+				].filter(Boolean) as HTMLElement[];
+
+				for (const el of hosts) {
+					const scale = readElementScale(el);
+					if (isSane(scale)) {
+						result = scale;
+						usedFallback = false;
+						break;
+					}
+				}
+			}
 		}
 
-		const canvasEl =
-			canvas?.canvasEl ??
-			view.containerEl.querySelector<HTMLElement>(".canvas");
-		if (canvasEl) {
-			const scale = readElementScale(canvasEl);
-			if (scale > 0) return scale;
+		if (canvas && isSane(result)) {
+			this.lastGoodZoomByCanvas.set(canvas, result);
 		}
 
-		const hosts = [
-			canvas?.wrapperEl,
-			view.containerEl.querySelector<HTMLElement>(".canvas-wrapper"),
-		].filter(Boolean) as HTMLElement[];
-
-		for (const el of hosts) {
-			const scale = readElementScale(el);
-			if (scale > 0) return scale;
-		}
-
-		return 1;
+		return result;
 	}
 
 	private ensureFpsOverlay(leaf: WorkspaceLeaf) {
@@ -1149,6 +1176,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		fps.setSparkleCountProvider(
 			() => this.vibeSparkles.get(id)?.getActiveCount() ?? 0,
 		);
+		fps.setZoomProvider(() => this.readCanvasZoom(view));
 		fps.attach(host);
 	}
 
