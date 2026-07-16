@@ -2517,7 +2517,22 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			const label = path.includes("/")
 				? path.slice(path.lastIndexOf("/") + 1)
 				: path || undefined;
-			slides.push({ src, label });
+			const nx = node.x;
+			const ny = node.y;
+			const nw = node.width;
+			const nh = node.height;
+			const hasLayout =
+				Number.isFinite(nx) &&
+				Number.isFinite(ny) &&
+				Number.isFinite(nw) &&
+				Number.isFinite(nh) &&
+				(nw as number) > 0 &&
+				(nh as number) > 0;
+			slides.push({
+				src,
+				label,
+				...(hasLayout ? { x: nx, y: ny, width: nw, height: nh } : {}),
+			});
 		}
 
 		if (slides.length === 0) {
@@ -2537,7 +2552,6 @@ export default class IntuitionCanvasPlugin extends Plugin {
 
 		const ok = present.start(host, slides, {
 			settings: this.settings.presentation,
-			sparklesConfig: this.settings.vibeSparkles,
 			/* Half of canvas vibe tilt; no cursor glare in slideshow. */
 			tiltStrength: Math.round(
 				this.clampVibeStrength(this.settings.vibeStrength) * 0.5,

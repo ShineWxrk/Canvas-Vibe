@@ -41,6 +41,7 @@ const PRESENTATION_TRANSITION_OPTIONS: {
 	{ value: "dissolve", label: "Растворение" },
 	{ value: "zoom", label: "Наплыв" },
 	{ value: "slide", label: "Сдвиг" },
+	{ value: "fly", label: "Коллаж" },
 ];
 
 /** UI shows transparency % (0 = opaque, 100 = invisible). Stored style uses opacity. */

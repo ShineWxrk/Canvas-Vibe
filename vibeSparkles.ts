@@ -388,23 +388,51 @@ export class VibeSparkleController {
 		}
 
 		const load = this.particles.length / Math.max(1, maxActive);
-		const spawnChance = Math.min(
-			0.95,
-			(0.15 + freqN * 0.7) * (0.4 + amountN * 0.5) * (1 - load * 0.35),
-		);
+		const deficit = Math.max(0, maxActive - this.particles.length);
 
 		/* Emptiest first — even spread, no per-card ceiling. */
 		targets.sort(
 			(a, b) => (this.counts.get(a) ?? 0) - (this.counts.get(b) ?? 0),
 		);
 
-		const deficit = Math.max(0, maxActive - this.particles.length);
+		const now = performance.now();
+
+		/*
+		 * Presentation has a single host — the board formula under-fires badly
+		 * (amount/freq are normalized to the global max, and passes scale with √N cards).
+		 * Use a denser batch path so hardcoded slideshow values actually read.
+		 */
+		if (this.spawnAroundCenter) {
+			const batch = Math.min(
+				deficit,
+				Math.max(3, Math.ceil(6 + freqN * 22 + amountN * 10)),
+			);
+			const chance = Math.min(0.98, 0.55 + freqN * 0.4 + amountN * 0.15);
+			for (let i = 0; i < batch && this.particles.length < maxActive; i++) {
+				if (Math.random() >= chance) continue;
+				this.spawn(targets[0], now);
+			}
+			this.startRaf();
+			const delay = Math.max(
+				24,
+				(48 + (1 - freqN) * 70) * (1.05 - amountN * 0.2) +
+					Math.random() * 30 +
+					load * 20,
+			);
+			this.scheduleSpawn(delay);
+			return;
+		}
+
+		const spawnChance = Math.min(
+			0.95,
+			(0.15 + freqN * 0.7) * (0.4 + amountN * 0.5) * (1 - load * 0.35),
+		);
+
 		const passes = Math.min(
 			deficit,
 			Math.max(1, Math.ceil((2 + freqN * 8) / Math.max(1, Math.sqrt(targets.length)))),
 		);
 
-		const now = performance.now();
 		for (let pass = 0; pass < passes && this.particles.length < maxActive; pass++) {
 			for (let i = 0; i < targets.length; i++) {
 				if (this.particles.length >= maxActive) break;
@@ -588,12 +616,14 @@ export class VibeSparkleController {
 		};
 	}
 
-	/** Mostly edges; rare soft sparks toward the photo center. */
+	/**
+	 * Presentation: mostly the rim, with a light sprinkle toward the mid frame.
+	 */
 	private randomAroundCenter(): { x: number; y: number } {
-		/* ~88% stay on the rim — denser edge field like canvas vibe. */
+		/* ~88% on the rim, ~12% soft inner sprinkle (not the dead center). */
 		if (Math.random() < 0.88) return this.randomNearEdge();
 		const angle = Math.random() * Math.PI * 2;
-		/* Sparse inward: keep away from dead-center, still inside the frame. */
+		/* Prefer mid-frame ring; keep the very center mostly clear. */
 		const radius = 22 + Math.random() * 28;
 		return {
 			x: 50 + Math.cos(angle) * radius,

@@ -21,9 +21,11 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 }
 
 /*
- * Far zoom overview: keep auras visible, drop only expensive motion/blur.
+ * Far zoom overview: keep canvas-node auras visible, drop expensive motion/blur.
+ * Scoped to `.canvas-node` so slideshow / sticky-player auras stay full-quality
+ * even if the board was zoomed out when presentation started.
  */
-.intuition-canvas-far-zoom .intuition-image-aura {
+.intuition-canvas-far-zoom .canvas-node .intuition-image-aura {
 	animation: none !important;
 	filter: none !important;
 	will-change: auto !important;
@@ -35,12 +37,7 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	height: 100% !important;
 }
 
-.intuition-canvas-far-zoom .intuition-sticky-audio .intuition-image-aura {
-	width: 118% !important;
-	height: 160% !important;
-}
-
-.intuition-canvas-far-zoom .intuition-image-aura__blob {
+.intuition-canvas-far-zoom .canvas-node .intuition-image-aura__blob {
 	animation: none !important;
 	filter: none !important;
 	will-change: auto !important;
@@ -57,6 +54,7 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	will-change: auto !important;
 }
 
+/* Hide board sparkles when far-zoomed — presentation has its own override below. */
 .intuition-canvas-far-zoom .intuition-vibe-sparkles-canvas {
 	visibility: hidden !important;
 	opacity: 0 !important;
@@ -1136,7 +1134,7 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	z-index: 0;
 	border-radius: 40%;
 	overflow: visible;
-	opacity: var(--intuition-aura-strength, 0.5);
+	opacity: calc(var(--intuition-aura-strength, 0.5) * 0.82);
 	animation: intuition-aura-breathe var(--intuition-aura-duration, 5.5s) ease-in-out
 		infinite;
 	animation-delay: var(--intuition-aura-delay, 0s);
@@ -1150,30 +1148,30 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 			ellipse 70% 60% at 35% 40%,
 			rgba(
 				var(--intuition-aura-rgb, 122, 107, 181),
-				calc(0.72 * var(--intuition-aura-strength, 0.5))
+				calc(0.48 * var(--intuition-aura-strength, 0.5))
 			)
 				0%,
-			transparent 70%
+			transparent 78%
 		),
 		radial-gradient(
 			ellipse 65% 55% at 70% 65%,
 			rgba(
 				var(--intuition-aura-rgb, 122, 107, 181),
-				calc(0.55 * var(--intuition-aura-strength, 0.5))
+				calc(0.36 * var(--intuition-aura-strength, 0.5))
 			)
 				0%,
-			transparent 72%
+			transparent 80%
 		),
 		radial-gradient(
 			circle at 50% 50%,
 			rgba(
 				var(--intuition-aura-rgb, 122, 107, 181),
-				calc(0.4 * var(--intuition-aura-strength, 0.5))
+				calc(0.28 * var(--intuition-aura-strength, 0.5))
 			)
 				0%,
-			transparent 68%
+			transparent 76%
 		);
-	filter: blur(18px) saturate(1.35);
+	filter: blur(32px) saturate(1.25);
 }
 
 /* v2: drifting color blobs — no mix-blend (expensive with many layers) */
@@ -1181,7 +1179,16 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	position: absolute;
 	border-radius: 50%;
 	pointer-events: none;
-	filter: blur(20px) saturate(1.35);
+	filter: blur(36px) saturate(1.2);
+}
+
+/* Fullscreen presentation: bigger soft glow so edges don't look hard. */
+.intuition-photo-presentation .intuition-image-aura {
+	opacity: calc(var(--intuition-aura-strength, 0.5) * 1);
+}
+
+.intuition-photo-presentation .intuition-image-aura__blob {
+	filter: blur(48px) saturate(1.15);
 }
 
 .intuition-image-aura__blob--a {
@@ -1191,8 +1198,8 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	top: 8%;
 	background: radial-gradient(
 		circle at 50% 50%,
-		rgba(var(--intuition-aura-rgb-a, 122, 107, 181), 0.85) 0%,
-		transparent 70%
+		rgba(var(--intuition-aura-rgb-a, 122, 107, 181), 0.55) 0%,
+		transparent 78%
 	);
 	animation: intuition-aura-drift-a var(--intuition-aura-drift-a, 8s) ease-in-out
 		infinite;
@@ -1208,8 +1215,8 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	top: auto;
 	background: radial-gradient(
 		circle at 50% 50%,
-		rgba(var(--intuition-aura-rgb-b, 160, 120, 200), 0.75) 0%,
-		transparent 72%
+		rgba(var(--intuition-aura-rgb-b, 160, 120, 200), 0.48) 0%,
+		transparent 80%
 	);
 	animation: intuition-aura-drift-b var(--intuition-aura-drift-b, 10s) ease-in-out
 		infinite;
@@ -1223,8 +1230,8 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	top: 30%;
 	background: radial-gradient(
 		circle at 50% 50%,
-		rgba(var(--intuition-aura-rgb-c, 100, 140, 220), 0.7) 0%,
-		transparent 68%
+		rgba(var(--intuition-aura-rgb-c, 100, 140, 220), 0.42) 0%,
+		transparent 78%
 	);
 	animation: intuition-aura-drift-c var(--intuition-aura-drift-c, 7s) ease-in-out
 		infinite;
@@ -1236,12 +1243,12 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	100% {
 		transform: translate(-50%, -50%)
 			scale(calc(var(--intuition-aura-size, 100) / 100));
-		opacity: calc(var(--intuition-aura-strength, 0.5) * 0.9);
+		opacity: calc(var(--intuition-aura-strength, 0.5) * 0.72);
 	}
 	50% {
 		transform: translate(-50%, -50%)
 			scale(calc(var(--intuition-aura-size, 100) / 100 * 1.06));
-		opacity: calc(var(--intuition-aura-strength, 0.5) * 1.08);
+		opacity: calc(var(--intuition-aura-strength, 0.5) * 0.88);
 	}
 }
 
@@ -1249,11 +1256,11 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	0%,
 	100% {
 		transform: translate(0, 0) scale(1);
-		opacity: 0.85;
+		opacity: 0.62;
 	}
 	33% {
 		transform: translate(12%, -10%) scale(1.12);
-		opacity: 1;
+		opacity: 0.78;
 	}
 	66% {
 		transform: translate(-8%, 14%) scale(0.92);
@@ -1265,15 +1272,15 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	0%,
 	100% {
 		transform: translate(0, 0) scale(1);
-		opacity: 0.8;
+		opacity: 0.55;
 	}
 	40% {
 		transform: translate(-14%, -8%) scale(1.1);
-		opacity: 1;
+		opacity: 0.72;
 	}
 	70% {
 		transform: translate(10%, 12%) scale(0.9);
-		opacity: 0.65;
+		opacity: 0.48;
 	}
 }
 
@@ -1281,11 +1288,11 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	0%,
 	100% {
 		transform: translate(0, 0) scale(1) rotate(0deg);
-		opacity: 0.75;
+		opacity: 0.5;
 	}
 	50% {
 		transform: translate(8%, -12%) scale(1.18) rotate(8deg);
-		opacity: 1;
+		opacity: 0.68;
 	}
 }
 
@@ -1296,13 +1303,12 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	}
 
 	.intuition-photo-presentation__img,
-	.intuition-photo-presentation__frame,
 	.intuition-photo-presentation__motion {
 		animation: none !important;
 		transform: none !important;
 	}
 
-	.intuition-photo-presentation__layer {
+	.intuition-photo-presentation__fly {
 		transition: none !important;
 	}
 }
@@ -1370,65 +1376,77 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	min-height: 0;
 }
 
-.intuition-photo-presentation__layer {
+/* Collage "table" — every selected photo laid out at its Canvas position,
+ * always visible behind the focused photo. Dimmed so focus reads clearly.
+ * Only shown in "fly" transition mode — classic dissolve/zoom/slide never
+ * reveal the board, since photos crossfade in place at the focus rect. */
+.intuition-photo-presentation__collage {
 	position: absolute;
-	inset: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	/* Leave margin so photos fit by H/W without filling the whole viewport. */
-	padding: clamp(28px, 7%, 72px) clamp(28px, 8%, 96px);
-	box-sizing: border-box;
-	/* Visible so auras aren't clipped; stage still has overflow:hidden. */
-	overflow: visible;
-	opacity: 0;
-	transition: opacity var(--intuition-present-fade) ease;
+	/* left/top/width/height set in JS to contain-fit with top/bottom air */
+	z-index: 0;
+	opacity: 0.42;
+	filter: saturate(0.82) brightness(0.7);
 	pointer-events: none;
-	min-width: 0;
-	min-height: 0;
 }
 
-.intuition-photo-presentation__layer--in {
+.intuition-photo-presentation:not(.intuition-photo-presentation--fly)
+	.intuition-photo-presentation__collage {
+	display: none !important;
+}
+
+.intuition-photo-presentation__tile {
+	position: absolute;
+	overflow: hidden;
+	border-radius: 10px;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+	background: rgba(255, 255, 255, 0.03);
 	opacity: 1;
+	transition: opacity 240ms ease;
 }
 
-.intuition-photo-presentation__layer--out {
-	opacity: 0;
-}
-
-/* Transition prep classes — transform/opacity are driven inline by photoPresentation.ts;
- * these just hint the compositor while a transition is in flight. */
-.intuition-photo-presentation__layer--tx-prep,
-.intuition-photo-presentation__layer--tx-zoom-out,
-.intuition-photo-presentation__layer--tx-slide-out {
-	will-change: transform, opacity;
-}
-
-/* Stable frame — overflow visible so auras can bloom past the photo. */
-.intuition-photo-presentation__frame {
-	position: relative;
-	display: flex;
-	align-items: center;
-	justify-content: center;
+.intuition-photo-presentation__tile-img {
+	display: block;
 	width: 100%;
 	height: 100%;
-	max-width: 100%;
-	max-height: 100%;
-	min-width: 0;
-	min-height: 0;
-	overflow: visible;
-	z-index: 0;
+	object-fit: cover;
+}
+
+/* Flying photo — animates between its collage slot and the focused view
+ * ("fly" mode), or crossfades in place at the focus rect for the classic
+ * dissolve/zoom/slide transitions. */
+.intuition-photo-presentation__fly {
+	position: absolute;
+	z-index: 1;
+	opacity: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+	transform-origin: center center;
+	--intuition-fly-fade: var(--intuition-present-fade);
+	transition:
+		left var(--intuition-fly-fade) cubic-bezier(0.45, 0.05, 0.55, 0.95),
+		top var(--intuition-fly-fade) cubic-bezier(0.45, 0.05, 0.55, 0.95),
+		width var(--intuition-fly-fade) cubic-bezier(0.45, 0.05, 0.55, 0.95),
+		height var(--intuition-fly-fade) cubic-bezier(0.45, 0.05, 0.55, 0.95),
+		opacity 220ms ease;
+	filter: drop-shadow(0 22px 46px rgba(0, 0, 0, 0.45));
+	will-change: left, top, width, height;
+}
+
+/* Classic transitions (dissolve / zoom / slide): the layer stays pinned at
+ * FOCUS_RECT the whole time, so only opacity + transform need to animate —
+ * both driven by --intuition-present-fade / --intuition-fly-fade. */
+.intuition-photo-presentation:not(.intuition-photo-presentation--fly)
+	.intuition-photo-presentation__fly {
+	transition:
+		opacity var(--intuition-fly-fade) cubic-bezier(0.45, 0.05, 0.55, 0.95),
+		transform var(--intuition-fly-fade) cubic-bezier(0.45, 0.05, 0.55, 0.95);
+	will-change: opacity, transform;
 }
 
 .intuition-photo-presentation__motion {
 	position: relative;
-	/* Definite box (% of frame) so img max-height:100% actually resolves.
-	 * Headroom (~86%) keeps Ken Burns from clipping the photo itself. */
-	width: 86%;
-	height: 86%;
-	max-width: 86%;
-	max-height: 86%;
-	flex: 0 0 auto;
+	width: 100%;
+	height: 100%;
 	overflow: visible;
 	transform-origin: center center;
 	will-change: transform;
@@ -1508,10 +1526,63 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 }
 
 .intuition-photo-presentation .intuition-vibe-sparkles-canvas {
-	z-index: 3;
+	/* Above fly layers (ascend z=6) so sparkles aren't buried under the photo. */
+	z-index: 8;
 	/* Stay visible even when canvas is in far-zoom lite mode. */
 	visibility: visible !important;
 	opacity: 1 !important;
+}
+
+/* Full soft auras in slideshow — never inherit canvas far-zoom lite. */
+.intuition-canvas-far-zoom .intuition-photo-presentation .intuition-image-aura,
+.intuition-photo-presentation .intuition-image-aura {
+	animation: intuition-aura-breathe var(--intuition-aura-duration, 5.5s)
+		ease-in-out infinite !important;
+	animation-delay: var(--intuition-aura-delay, 0s) !important;
+	filter: none !important;
+	will-change: transform, opacity !important;
+	transform: translate(-50%, -50%)
+		scale(calc(var(--intuition-aura-size, 100) / 100)) !important;
+	width: 100% !important;
+	height: 100% !important;
+	opacity: calc(var(--intuition-aura-strength, 0.5) * 1) !important;
+	visibility: visible !important;
+}
+
+.intuition-canvas-far-zoom
+	.intuition-photo-presentation
+	.intuition-image-aura__blob,
+.intuition-photo-presentation .intuition-image-aura__blob {
+	filter: blur(48px) saturate(1.15) !important;
+	will-change: transform, opacity !important;
+	visibility: visible !important;
+}
+
+.intuition-canvas-far-zoom
+	.intuition-photo-presentation
+	.intuition-image-aura__blob--a,
+.intuition-photo-presentation .intuition-image-aura__blob--a {
+	animation: intuition-aura-drift-a var(--intuition-aura-drift-a, 8s) ease-in-out
+		infinite !important;
+	animation-delay: var(--intuition-aura-delay-a, 0s) !important;
+}
+
+.intuition-canvas-far-zoom
+	.intuition-photo-presentation
+	.intuition-image-aura__blob--b,
+.intuition-photo-presentation .intuition-image-aura__blob--b {
+	animation: intuition-aura-drift-b var(--intuition-aura-drift-b, 10s)
+		ease-in-out infinite !important;
+	animation-delay: var(--intuition-aura-delay-b, 0s) !important;
+}
+
+.intuition-canvas-far-zoom
+	.intuition-photo-presentation
+	.intuition-image-aura__blob--c,
+.intuition-photo-presentation .intuition-image-aura__blob--c {
+	animation: intuition-aura-drift-c var(--intuition-aura-drift-c, 7s) ease-in-out
+		infinite !important;
+	animation-delay: var(--intuition-aura-delay-c, 0s) !important;
 }
 
 /* Keep presentation auras even if canvas auras are toggled off. */
@@ -1558,8 +1629,7 @@ body.intuition-canvas-hide-auras
 
 @keyframes intuition-kb-a {
 	from {
-		transform: scale(calc(1 + 0.04 * var(--intuition-kb-amp, 1)))
-			translate(0%, 0%);
+		transform: scale(1) translate(0%, 0%);
 	}
 	to {
 		transform: scale(calc(1 + 0.14 * var(--intuition-kb-amp, 1)))
@@ -1572,14 +1642,10 @@ body.intuition-canvas-hide-auras
 
 @keyframes intuition-kb-b {
 	from {
-		transform: scale(calc(1 + 0.12 * var(--intuition-kb-amp, 1)))
-			translate(
-				calc(-2% * var(--intuition-kb-amp, 1)),
-				calc(1% * var(--intuition-kb-amp, 1))
-			);
+		transform: scale(1) translate(0%, 0%);
 	}
 	to {
-		transform: scale(calc(1 + 0.04 * var(--intuition-kb-amp, 1)))
+		transform: scale(calc(1 + 0.12 * var(--intuition-kb-amp, 1)))
 			translate(
 				calc(1.5% * var(--intuition-kb-amp, 1)),
 				calc(-1% * var(--intuition-kb-amp, 1))
@@ -1589,11 +1655,7 @@ body.intuition-canvas-hide-auras
 
 @keyframes intuition-kb-c {
 	from {
-		transform: scale(calc(1 + 0.05 * var(--intuition-kb-amp, 1)))
-			translate(
-				calc(1.5% * var(--intuition-kb-amp, 1)),
-				calc(-1% * var(--intuition-kb-amp, 1))
-			);
+		transform: scale(1) translate(0%, 0%);
 	}
 	to {
 		transform: scale(calc(1 + 0.13 * var(--intuition-kb-amp, 1)))
@@ -1606,14 +1668,10 @@ body.intuition-canvas-hide-auras
 
 @keyframes intuition-kb-d {
 	from {
-		transform: scale(calc(1 + 0.1 * var(--intuition-kb-amp, 1)))
-			translate(
-				0%,
-				calc(1.5% * var(--intuition-kb-amp, 1))
-			);
+		transform: scale(1) translate(0%, 0%);
 	}
 	to {
-		transform: scale(calc(1 + 0.04 * var(--intuition-kb-amp, 1)))
+		transform: scale(calc(1 + 0.1 * var(--intuition-kb-amp, 1)))
 			translate(
 				calc(-2% * var(--intuition-kb-amp, 1)),
 				calc(-1% * var(--intuition-kb-amp, 1))
@@ -1625,7 +1683,7 @@ body.intuition-canvas-hide-auras
 	position: absolute;
 	inset: 0;
 	pointer-events: none;
-	z-index: 4;
+	z-index: 9;
 }
 
 .intuition-photo-presentation__meta {

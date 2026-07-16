@@ -980,7 +980,7 @@ function hasImageFormat() {
 // presentationSettings.ts
 var PRESENTATION_LIMITS = {
   intervalSec: { min: 2, max: 30 },
-  fadeMs: { min: 200, max: 3e3 },
+  fadeMs: { min: 200, max: 5e3 },
   kenBurnsStrength: { min: 0, max: 100 }
 };
 var DEFAULT_PRESENTATION_SETTINGS = {
@@ -996,7 +996,8 @@ var DEFAULT_PRESENTATION_SETTINGS = {
   letterbox: true
 };
 function normalizePresentationTransition(value) {
-  if (value === "zoom" || value === "slide" || value === "dissolve") return value;
+  if (value === "zoom" || value === "slide" || value === "dissolve" || value === "fly")
+    return value;
   return DEFAULT_PRESENTATION_SETTINGS.transition;
 }
 function normalizePresentationSettings(partial) {
@@ -1043,7 +1044,8 @@ function clamp2(n, min, max) {
 var PRESENTATION_TRANSITION_OPTIONS = [
   { value: "dissolve", label: "\u0420\u0430\u0441\u0442\u0432\u043E\u0440\u0435\u043D\u0438\u0435" },
   { value: "zoom", label: "\u041D\u0430\u043F\u043B\u044B\u0432" },
-  { value: "slide", label: "\u0421\u0434\u0432\u0438\u0433" }
+  { value: "slide", label: "\u0421\u0434\u0432\u0438\u0433" },
+  { value: "fly", label: "\u041A\u043E\u043B\u043B\u0430\u0436" }
 ];
 function toTransparency(opacity) {
   return Math.min(100, Math.max(0, 100 - opacity));
@@ -3649,19 +3651,37 @@ var VibeSparkleController = class {
       return;
     }
     const load = this.particles.length / Math.max(1, maxActive);
+    const deficit = Math.max(0, maxActive - this.particles.length);
+    targets.sort(
+      (a, b) => (this.counts.get(a) ?? 0) - (this.counts.get(b) ?? 0)
+    );
+    const now = performance.now();
+    if (this.spawnAroundCenter) {
+      const batch = Math.min(
+        deficit,
+        Math.max(3, Math.ceil(6 + freqN * 22 + amountN * 10))
+      );
+      const chance = Math.min(0.98, 0.55 + freqN * 0.4 + amountN * 0.15);
+      for (let i = 0; i < batch && this.particles.length < maxActive; i++) {
+        if (Math.random() >= chance) continue;
+        this.spawn(targets[0], now);
+      }
+      this.startRaf();
+      const delay2 = Math.max(
+        24,
+        (48 + (1 - freqN) * 70) * (1.05 - amountN * 0.2) + Math.random() * 30 + load * 20
+      );
+      this.scheduleSpawn(delay2);
+      return;
+    }
     const spawnChance = Math.min(
       0.95,
       (0.15 + freqN * 0.7) * (0.4 + amountN * 0.5) * (1 - load * 0.35)
     );
-    targets.sort(
-      (a, b) => (this.counts.get(a) ?? 0) - (this.counts.get(b) ?? 0)
-    );
-    const deficit = Math.max(0, maxActive - this.particles.length);
     const passes = Math.min(
       deficit,
       Math.max(1, Math.ceil((2 + freqN * 8) / Math.max(1, Math.sqrt(targets.length))))
     );
-    const now = performance.now();
     for (let pass = 0; pass < passes && this.particles.length < maxActive; pass++) {
       for (let i = 0; i < targets.length; i++) {
         if (this.particles.length >= maxActive) break;
@@ -3801,7 +3821,9 @@ var VibeSparkleController = class {
       y: -pad + t * (100 + pad * 2)
     };
   }
-  /** Mostly edges; rare soft sparks toward the photo center. */
+  /**
+   * Presentation: mostly the rim, with a light sprinkle toward the mid frame.
+   */
   randomAroundCenter() {
     if (Math.random() < 0.88) return this.randomNearEdge();
     const angle = Math.random() * Math.PI * 2;
@@ -4378,18 +4400,42 @@ var KEN_BURNS_VARIANTS = [
   "intuition-kb-c",
   "intuition-kb-d"
 ];
-var TX_CLASSES = [
-  `${ROOT_CLS}__layer--tx-prep`,
-  `${ROOT_CLS}__layer--tx-zoom-out`,
-  `${ROOT_CLS}__layer--tx-slide-out`
-];
+var FOCUS_RECT = { left: 7, top: 7, width: 86, height: 86 };
+var COLLAGE_PAD_X = 0.08;
+var COLLAGE_PAD_Y = 0.14;
+var FLY_Z_FRONT = "6";
+var FLY_Z_BACK = "5";
+var FLY_Z_IDLE = "1";
+var FLY_EASE_IN_OUT = "cubic-bezier(0.45, 0.05, 0.55, 0.95)";
+var COLLISION_PAD_PX = 22;
+var COLLISION_MAX_PUSH_PX = 48;
+var COLLISION_TARGET_LERP = 0.05;
+var COLLISION_OFFSET_LERP = 0.07;
+var COLLISION_PUSH_GAIN = 0.32;
+function flyMotionTransition(ms, classic) {
+  const ease = FLY_EASE_IN_OUT;
+  if (classic) {
+    return [
+      `opacity ${ms}ms ${ease}`,
+      `transform ${ms}ms ${ease}`
+    ].join(", ");
+  }
+  return [
+    `left ${ms}ms ${ease}`,
+    `top ${ms}ms ${ease}`,
+    `width ${ms}ms ${ease}`,
+    `height ${ms}ms ${ease}`
+  ].join(", ");
+}
 var PhotoPresentation = class {
   constructor() {
     this.root = null;
-    this.layerA = null;
-    this.layerB = null;
-    this.frameA = null;
-    this.frameB = null;
+    this.stageEl = null;
+    this.collageBoard = null;
+    this.tiles = [];
+    this.collageRects = [];
+    this.flyA = null;
+    this.flyB = null;
     this.motionA = null;
     this.motionB = null;
     this.imgA = null;
@@ -4397,15 +4443,16 @@ var PhotoPresentation = class {
     this.metaEl = null;
     this.slides = [];
     this.index = 0;
-    this.usingA = true;
+    this.currentWhich = "a";
+    this.currentIndex = -1;
     this.timer = 0;
     this.fadeMs = DEFAULT_PRESENTATION_SETTINGS.fadeMs;
     this.intervalMs = DEFAULT_PRESENTATION_SETTINGS.intervalSec * 1e3;
     this.kenBurnsStrength = DEFAULT_PRESENTATION_SETTINGS.kenBurnsStrength;
+    this.transition = DEFAULT_PRESENTATION_SETTINGS.transition;
     this.aurasEnabled = true;
     this.sparklesEnabled = true;
     this.paletteBg = true;
-    this.transition = "dissolve";
     this.onClose = null;
     this.keyHandler = null;
     this.closed = true;
@@ -4414,8 +4461,30 @@ var PhotoPresentation = class {
     this.tilt = null;
     this.sparkleAnchor = null;
     this.hostEl = null;
-    this.kbClearTimer = 0;
-    this.sparklesConfig = null;
+    this.settleTimers = { a: 0, b: 0 };
+    this.restTimers = { a: 0, b: 0 };
+    /** Mid-cross z-index swap while one card rises and the other falls. */
+    this.zSwapTimer = 0;
+    /** RAF soft-separation while two fly cards cross. */
+    this.collisionRaf = 0;
+    this.collisionUntil = 0;
+    /** Keep separating until the rising card finishes its CSS travel. */
+    this.collisionAscendUntil = 0;
+    this.collisionAscendStart = 0;
+    this.collisionIn = null;
+    this.collisionOut = null;
+    this.collisionOffset = {
+      a: { x: 0, y: 0 },
+      b: { x: 0, y: 0 }
+    };
+    /** Separation axis locked for the whole cross (avoids 180° flips mid-pass). */
+    this.collisionAxisNx = 1;
+    this.collisionAxisNy = 0;
+    this.collisionAxisReady = false;
+    /** Smoothed push magnitude along the locked axis. */
+    this.collisionPush = 0;
+    /** Slide index currently bound to each fly layer (−1 = none). */
+    this.flyOwnedIndex = { a: -1, b: -1 };
     this.tiltStrength = 50;
     /** True when we successfully entered native OS fullscreen for this run. */
     this.fullscreenActive = false;
@@ -4423,6 +4492,7 @@ var PhotoPresentation = class {
     /** Sticky player reparented into fullscreen root for the duration of the show. */
     this.adoptedSticky = null;
     this.stickyHome = null;
+    this.resizeObserver = null;
   }
   isActive() {
     return !this.closed && !!this.root;
@@ -4434,17 +4504,17 @@ var PhotoPresentation = class {
     this.closed = false;
     this.slides = clean;
     this.index = 0;
-    this.usingA = true;
+    this.currentWhich = "a";
+    this.currentIndex = -1;
     const cfg = normalizePresentationSettings(options.settings);
     if (cfg.shuffle) this.shuffleSlidesInPlace(this.slides);
     this.intervalMs = Math.round(cfg.intervalSec * 1e3);
     this.fadeMs = cfg.fadeMs;
     this.kenBurnsStrength = cfg.kenBurnsStrength;
+    this.transition = normalizePresentationTransition(cfg.transition);
     this.aurasEnabled = cfg.auras;
     this.sparklesEnabled = cfg.sparkles;
     this.paletteBg = cfg.paletteBg;
-    this.transition = normalizePresentationTransition(cfg.transition);
-    this.sparklesConfig = options.sparklesConfig ?? null;
     this.tiltStrength = typeof options.tiltStrength === "number" && Number.isFinite(options.tiltStrength) ? options.tiltStrength : 50;
     this.onClose = options.onClose ?? null;
     const root = document.createElement("div");
@@ -4453,10 +4523,11 @@ var PhotoPresentation = class {
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
     root.setAttribute("aria-label", "Photo presentation");
-    root.dataset.transition = this.transition;
     root.classList.toggle(`${ROOT_CLS}--palette-bg`, this.paletteBg);
     root.classList.toggle(`${ROOT_CLS}--vignette`, cfg.vignette);
     root.classList.toggle(`${ROOT_CLS}--letterbox`, cfg.letterbox);
+    root.classList.toggle(`${ROOT_CLS}--fly`, this.transition === "fly");
+    root.dataset.transition = this.transition;
     root.style.setProperty("--intuition-present-fade", `${this.fadeMs}ms`);
     root.style.setProperty(
       "--intuition-present-hold",
@@ -4464,11 +4535,35 @@ var PhotoPresentation = class {
     );
     const stage = document.createElement("div");
     stage.className = `${ROOT_CLS}__stage`;
-    const makeLayer = (name) => {
-      const layer = document.createElement("div");
-      layer.className = `${ROOT_CLS}__layer ${ROOT_CLS}__layer--${name}`;
-      const frame = document.createElement("div");
-      frame.className = `${ROOT_CLS}__frame`;
+    this.stageEl = stage;
+    const collageBoard = document.createElement("div");
+    collageBoard.className = `${ROOT_CLS}__collage`;
+    collageBoard.setAttribute("aria-hidden", "true");
+    stage.appendChild(collageBoard);
+    this.collageBoard = collageBoard;
+    this.tiles = this.slides.map((slide) => {
+      const tile = document.createElement("div");
+      tile.className = `${ROOT_CLS}__tile`;
+      const img = document.createElement("img");
+      img.className = `${ROOT_CLS}__tile-img`;
+      img.draggable = false;
+      img.alt = "";
+      img.loading = "lazy";
+      img.src = slide.src;
+      tile.appendChild(img);
+      collageBoard.appendChild(tile);
+      return tile;
+    });
+    this.relayoutCollage();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.closed) return;
+      this.relayoutCollage();
+    });
+    this.resizeObserver.observe(stage);
+    const makeFly = (name) => {
+      const fly = document.createElement("div");
+      fly.className = `${ROOT_CLS}__fly ${ROOT_CLS}__fly--${name}`;
       const motion = document.createElement("div");
       motion.className = `${ROOT_CLS}__motion`;
       const photo = document.createElement("div");
@@ -4479,17 +4574,14 @@ var PhotoPresentation = class {
       img.alt = "";
       photo.appendChild(img);
       motion.appendChild(photo);
-      frame.appendChild(motion);
-      layer.appendChild(frame);
-      stage.appendChild(layer);
-      return { layer, frame, motion, img };
+      fly.appendChild(motion);
+      stage.appendChild(fly);
+      return { fly, motion, img };
     };
-    const a = makeLayer("a");
-    const b = makeLayer("b");
-    this.layerA = a.layer;
-    this.layerB = b.layer;
-    this.frameA = a.frame;
-    this.frameB = b.frame;
+    const a = makeFly("a");
+    const b = makeFly("b");
+    this.flyA = a.fly;
+    this.flyB = b.fly;
     this.motionA = a.motion;
     this.motionB = b.motion;
     this.imgA = a.img;
@@ -4554,6 +4646,11 @@ var PhotoPresentation = class {
       this.onFullscreenChange
     );
     void this.enterNativeFullscreen(root);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (!this.closed) this.relayoutCollage();
+      });
+    });
     if (this.sparklesEnabled) {
       this.sparkles = new VibeSparkleController();
       this.sparkles.attach(root, {
@@ -4565,15 +4662,14 @@ var PhotoPresentation = class {
         () => this.sparkleAnchor?.isConnected ? [this.sparkleAnchor] : []
       );
       this.sparkles.setSpawnAroundCenter(true);
-      const sparkleBase = normalizeSparkleConfig(
-        this.sparklesConfig ?? DEFAULT_SPARKLE_CONFIG
-      );
       this.sparkles.setConfig({
-        ...sparkleBase,
-        amount: Math.min(500, Math.round(sparkleBase.amount * 2.4)),
-        frequency: Math.min(200, Math.round(sparkleBase.frequency * 2)),
-        size: Math.min(48, Math.round(sparkleBase.size * 1.2)),
-        opacity: Math.min(100, Math.round(sparkleBase.opacity * 1.05))
+        amount: 380,
+        frequency: 170,
+        size: 10,
+        lifetime: 2600,
+        color: "#ffffff",
+        opacity: 95,
+        drift: 90
       });
       this.sparkles.setEnabled(true);
     }
@@ -4616,10 +4712,18 @@ var PhotoPresentation = class {
       window.clearTimeout(this.timer);
       this.timer = 0;
     }
-    if (this.kbClearTimer) {
-      window.clearTimeout(this.kbClearTimer);
-      this.kbClearTimer = 0;
+    for (const id of ["a", "b"]) {
+      if (this.settleTimers[id]) {
+        window.clearTimeout(this.settleTimers[id]);
+        this.settleTimers[id] = 0;
+      }
+      if (this.restTimers[id]) {
+        window.clearTimeout(this.restTimers[id]);
+        this.restTimers[id] = 0;
+      }
     }
+    this.clearZSwapTimer();
+    this.stopCollisionAvoidance(true);
     if (this.keyHandler) {
       window.removeEventListener("keydown", this.keyHandler, true);
       this.keyHandler = null;
@@ -4636,6 +4740,9 @@ var PhotoPresentation = class {
       this.onFullscreenChange = null;
     }
     void this.exitNativeFullscreen();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.stageEl = null;
     if (this.motionA) removeAuraLayer(this.motionA);
     if (this.motionB) removeAuraLayer(this.motionB);
     this.sparkles?.destroy();
@@ -4650,15 +4757,19 @@ var PhotoPresentation = class {
     this.restoreStickyPlayer();
     this.root?.remove();
     this.root = null;
-    this.layerA = null;
-    this.layerB = null;
-    this.frameA = null;
-    this.frameB = null;
+    this.collageBoard = null;
+    this.tiles = [];
+    this.collageRects = [];
+    this.flyA = null;
+    this.flyB = null;
     this.motionA = null;
     this.motionB = null;
     this.imgA = null;
     this.imgB = null;
     this.metaEl = null;
+    this.currentWhich = "a";
+    this.currentIndex = -1;
+    this.flyOwnedIndex = { a: -1, b: -1 };
     this.slides = [];
     if (wasOpen && this.onClose) {
       const cb = this.onClose;
@@ -4693,63 +4804,35 @@ var PhotoPresentation = class {
   }
   showIndex(index, animate) {
     const slide = this.slides[index];
-    if (!slide || !this.imgA || !this.imgB || !this.layerA || !this.layerB || !this.motionA || !this.motionB) {
-      return;
-    }
-    if (this.kbClearTimer) {
-      window.clearTimeout(this.kbClearTimer);
-      this.kbClearTimer = 0;
-    }
+    if (!slide || !this.flyA || !this.flyB) return;
     if (!animate) {
-      this.clearKenBurns(this.layerA);
-      this.clearKenBurns(this.layerB);
-      this.clearLayerTransition(this.layerA);
-      this.clearLayerTransition(this.layerB);
-      this.imgA.src = slide.src;
-      this.imgA.alt = slide.label ?? "";
-      this.layerA.classList.add(`${ROOT_CLS}__layer--in`);
-      this.layerA.classList.remove(`${ROOT_CLS}__layer--out`);
-      this.layerB.classList.add(`${ROOT_CLS}__layer--out`);
-      this.layerB.classList.remove(`${ROOT_CLS}__layer--in`);
-      this.layerA.style.opacity = "1";
-      this.layerA.style.transform = "";
-      this.layerB.style.opacity = "0";
-      this.layerB.style.transform = "";
-      if (this.kenBurnsStrength > 0) {
-        void this.applyKenBurns(this.layerA, this.motionA, this.imgA, index);
-      }
-      void this.refreshSlideFx(this.motionA, this.imgA, slide.src);
-      this.usingA = true;
+      this.clearZSwapTimer();
+      this.stopCollisionAvoidance(true);
+      this.currentWhich = "a";
+      this.currentIndex = index;
+      this.ascend("a", index, true);
     } else {
-      const incomingImg = this.usingA ? this.imgB : this.imgA;
-      const incomingLayer = this.usingA ? this.layerB : this.layerA;
-      const incomingMotion = this.usingA ? this.motionB : this.motionA;
-      const outgoingLayer = this.usingA ? this.layerA : this.layerB;
-      this.freezeKenBurns(outgoingLayer);
-      this.clearKenBurns(incomingLayer);
-      incomingImg.src = slide.src;
-      incomingImg.alt = slide.label ?? "";
-      incomingLayer.classList.add(`${ROOT_CLS}__layer--in`);
-      incomingLayer.classList.remove(`${ROOT_CLS}__layer--out`);
-      outgoingLayer.classList.add(`${ROOT_CLS}__layer--out`);
-      outgoingLayer.classList.remove(`${ROOT_CLS}__layer--in`);
-      this.runTransition(incomingLayer, outgoingLayer);
-      if (this.kenBurnsStrength > 0) {
-        void this.applyKenBurns(
-          incomingLayer,
-          incomingMotion,
-          incomingImg,
-          index
+      const outWhich = this.currentWhich;
+      const outIndex = this.currentIndex;
+      const inWhich = outWhich === "a" ? "b" : "a";
+      if (outIndex >= 0) {
+        this.stopCollisionAvoidance(true);
+        this.descend(outWhich, outIndex);
+        this.ascend(
+          inWhich,
+          index,
+          false,
+          /* startInBack */
+          true
         );
+        this.scheduleCrossZSwap(inWhich, outWhich);
+        this.startCollisionAvoidance(inWhich, outWhich);
+      } else {
+        this.stopCollisionAvoidance(true);
+        this.ascend(inWhich, index, false);
       }
-      void this.refreshSlideFx(incomingMotion, incomingImg, slide.src);
-      this.usingA = !this.usingA;
-      this.kbClearTimer = window.setTimeout(() => {
-        this.kbClearTimer = 0;
-        if (this.closed) return;
-        this.clearKenBurns(outgoingLayer);
-        this.clearLayerTransition(outgoingLayer);
-      }, this.fadeMs + 40);
+      this.currentWhich = inWhich;
+      this.currentIndex = index;
     }
     this.index = index;
     if (this.metaEl) {
@@ -4757,54 +4840,494 @@ var PhotoPresentation = class {
       this.metaEl.textContent = `${index + 1} / ${this.slides.length}${label}`;
     }
   }
-  runTransition(incoming, outgoing) {
-    this.clearLayerTransition(incoming);
-    this.clearLayerTransition(outgoing);
-    const fade = `${this.fadeMs}ms`;
-    incoming.style.transition = "none";
-    outgoing.style.transition = `opacity ${fade} ease, transform ${fade} ease`;
-    if (this.transition === "zoom") {
-      incoming.classList.add(`${ROOT_CLS}__layer--tx-prep`);
-      incoming.style.opacity = "0";
-      incoming.style.transform = "scale(1.08)";
-    } else if (this.transition === "slide") {
-      incoming.classList.add(`${ROOT_CLS}__layer--tx-prep`);
-      incoming.style.opacity = "0";
-      incoming.style.transform = "translateX(7%)";
-    } else {
-      incoming.style.opacity = "0";
-      incoming.style.transform = "";
-    }
-    void incoming.offsetWidth;
-    incoming.style.transition = `opacity ${fade} ease, transform ${fade} ease`;
-    incoming.style.opacity = "1";
-    incoming.style.transform = "none";
-    incoming.classList.remove(`${ROOT_CLS}__layer--tx-prep`);
-    outgoing.style.opacity = "0";
-    if (this.transition === "zoom") {
-      outgoing.classList.add(`${ROOT_CLS}__layer--tx-zoom-out`);
-      outgoing.style.transform = "scale(0.94)";
-    } else if (this.transition === "slide") {
-      outgoing.classList.add(`${ROOT_CLS}__layer--tx-slide-out`);
-      outgoing.style.transform = "translateX(-6%)";
-    } else {
-      outgoing.style.transform = "";
+  clearZSwapTimer() {
+    if (this.zSwapTimer) {
+      window.clearTimeout(this.zSwapTimer);
+      this.zSwapTimer = 0;
     }
   }
-  clearLayerTransition(layer) {
-    for (const c of TX_CLASSES) layer.classList.remove(c);
-    layer.style.transition = "";
-    layer.style.transform = "";
+  /**
+   * Halfway through the cross: bring the rising card in front of the
+   * falling one so they feel like they swapped depth order.
+   */
+  scheduleCrossZSwap(inWhich, outWhich) {
+    this.clearZSwapTimer();
+    const ascendMs = this.fadeMs;
+    const descendMs = Math.max(80, Math.round(this.fadeMs * (2 / 3)));
+    const swapAt = Math.max(60, Math.round(Math.min(ascendMs, descendMs) * 0.5));
+    this.zSwapTimer = window.setTimeout(() => {
+      this.zSwapTimer = 0;
+      if (this.closed) return;
+      const inFly = inWhich === "a" ? this.flyA : this.flyB;
+      const outFly = outWhich === "a" ? this.flyA : this.flyB;
+      if (inFly) inFly.style.zIndex = FLY_Z_FRONT;
+      if (outFly) outFly.style.zIndex = FLY_Z_BACK;
+    }, swapAt);
+  }
+  stopCollisionAvoidance(clearTransforms) {
+    if (this.collisionRaf) {
+      window.cancelAnimationFrame(this.collisionRaf);
+      this.collisionRaf = 0;
+    }
+    this.collisionIn = null;
+    this.collisionOut = null;
+    this.collisionUntil = 0;
+    this.collisionAscendUntil = 0;
+    this.collisionAscendStart = 0;
+    this.collisionAxisReady = false;
+    this.collisionAxisNx = 1;
+    this.collisionAxisNy = 0;
+    this.collisionPush = 0;
+    this.collisionOffset = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 } };
+    if (clearTransforms && this.transition === "fly") {
+      if (this.flyA) this.flyA.style.transform = "";
+      if (this.flyB) this.flyB.style.transform = "";
+    }
+  }
+  /**
+   * Soft AABB separation while one card rises and the other falls —
+   * CSS still drives left/top/size; we only nudge via translate3d.
+   */
+  startCollisionAvoidance(inWhich, outWhich) {
+    if (this.transition !== "fly") return;
+    this.stopCollisionAvoidance(true);
+    this.collisionIn = inWhich;
+    this.collisionOut = outWhich;
+    const ascendMs = this.fadeMs;
+    const descendMs = Math.max(80, Math.round(this.fadeMs * (2 / 3)));
+    const handoffMs = Math.max(
+      200,
+      Math.min(420, Math.round(descendMs * 0.5))
+    );
+    const now = performance.now();
+    this.collisionAscendStart = now;
+    this.collisionAscendUntil = now + ascendMs + 60;
+    this.collisionUntil = this.collisionAscendUntil + Math.max(420, Math.round(handoffMs * 0.9));
+    const tick = () => {
+      this.collisionRaf = 0;
+      if (this.closed || this.transition !== "fly") {
+        this.stopCollisionAvoidance(true);
+        return;
+      }
+      const inFly = inWhich === "a" ? this.flyA : this.flyB;
+      const outFly = outWhich === "a" ? this.flyA : this.flyB;
+      if (!inFly?.isConnected) {
+        this.stopCollisionAvoidance(true);
+        return;
+      }
+      if (!outFly?.isConnected) {
+        this.stopCollisionAvoidance(true);
+        return;
+      }
+      const t = performance.now();
+      const ascendSpan = Math.max(
+        1,
+        this.collisionAscendUntil - this.collisionAscendStart
+      );
+      const ascendU = Math.min(
+        1,
+        Math.max(0, (t - this.collisionAscendStart) / ascendSpan)
+      );
+      let influence = 1;
+      if (ascendU > 0.45) {
+        const f = (ascendU - 0.45) / 0.55;
+        influence = 1 - f * f * (3 - 2 * f);
+      }
+      const ascendDone = t >= this.collisionAscendUntil;
+      const forceDecay = ascendDone || influence < 0.02;
+      this.tickCollisionSeparation(
+        inFly,
+        outFly,
+        inWhich,
+        outWhich,
+        forceDecay,
+        forceDecay ? 0 : influence
+      );
+      const oa = this.collisionOffset[inWhich];
+      const settled = Math.hypot(oa.x, oa.y) < 0.25;
+      if (forceDecay && settled) {
+        this.stopCollisionAvoidance(true);
+        return;
+      }
+      this.collisionRaf = window.requestAnimationFrame(tick);
+    };
+    this.collisionRaf = window.requestAnimationFrame(tick);
+  }
+  /** Layout box with collision translate stripped out (stable for overlap math). */
+  collisionLayoutBox(fly, which) {
+    const r = fly.getBoundingClientRect();
+    const o = this.collisionOffset[which];
+    const left = r.left - o.x;
+    const top = r.top - o.y;
+    const right = r.right - o.x;
+    const bottom = r.bottom - o.y;
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      cx: (left + right) * 0.5,
+      cy: (top + bottom) * 0.5,
+      hw: (right - left) * 0.5,
+      hh: (bottom - top) * 0.5
+    };
+  }
+  applyCollisionOffset(fly, which) {
+    const o = this.collisionOffset[which];
+    if (Math.abs(o.x) < 0.05 && Math.abs(o.y) < 0.05) {
+      o.x = 0;
+      o.y = 0;
+      fly.style.transform = "";
+      return;
+    }
+    fly.style.transform = `translate3d(${o.x.toFixed(2)}px, ${o.y.toFixed(2)}px, 0)`;
+  }
+  tickCollisionSeparation(inFly, outFly, inWhich, outWhich, forceDecay, influence = 1) {
+    let desiredPush = 0;
+    const outGone = Number.parseFloat(outFly.style.opacity || "1") < 0.08;
+    if (!forceDecay && influence > 1e-3) {
+      const a = this.collisionLayoutBox(inFly, inWhich);
+      const b = this.collisionLayoutBox(outFly, outWhich);
+      let dx = a.cx - b.cx;
+      let dy = a.cy - b.cy;
+      let dist = Math.hypot(dx, dy);
+      if (!this.collisionAxisReady) {
+        if (dist > 1) {
+          this.collisionAxisNx = dx / dist;
+          this.collisionAxisNy = dy / dist;
+        } else {
+          this.collisionAxisNx = 1;
+          this.collisionAxisNy = 0;
+        }
+        this.collisionAxisReady = true;
+      }
+      const nx2 = this.collisionAxisNx;
+      const ny2 = this.collisionAxisNy;
+      const ra = a.hw * Math.abs(nx2) + a.hh * Math.abs(ny2) + COLLISION_PAD_PX * 0.5;
+      const rb = b.hw * Math.abs(nx2) + b.hh * Math.abs(ny2) + COLLISION_PAD_PX * 0.5;
+      const proj = (a.cx - b.cx) * nx2 + (a.cy - b.cy) * ny2;
+      const sep = ra + rb - Math.abs(proj);
+      if (sep > 0) {
+        const t = Math.min(1, sep / 90);
+        const soft = t * t * (3 - 2 * t);
+        desiredPush = Math.min(
+          COLLISION_MAX_PUSH_PX,
+          sep * COLLISION_PUSH_GAIN * soft
+        ) * influence;
+      }
+    }
+    const targetLerp = forceDecay ? COLLISION_TARGET_LERP * 0.35 : COLLISION_TARGET_LERP;
+    this.collisionPush += (desiredPush - this.collisionPush) * targetLerp;
+    if (Math.abs(this.collisionPush) < 0.05) this.collisionPush = 0;
+    const nx = this.collisionAxisNx;
+    const ny = this.collisionAxisNy;
+    const push = this.collisionPush;
+    const targetInX = nx * push;
+    const targetInY = ny * push;
+    const lerp = forceDecay ? COLLISION_OFFSET_LERP * 0.35 : COLLISION_OFFSET_LERP;
+    const oi = this.collisionOffset[inWhich];
+    oi.x += (targetInX - oi.x) * lerp;
+    oi.y += (targetInY - oi.y) * lerp;
+    this.applyCollisionOffset(inFly, inWhich);
+    if (outGone || forceDecay) {
+      const oo = this.collisionOffset[outWhich];
+      oo.x = 0;
+      oo.y = 0;
+    } else {
+      const oo = this.collisionOffset[outWhich];
+      oo.x += (-nx * push - oo.x) * lerp;
+      oo.y += (-ny * push - oo.y) * lerp;
+      this.applyCollisionOffset(outFly, outWhich);
+    }
+  }
+  clearFlyTimers(which) {
+    if (this.settleTimers[which]) {
+      window.clearTimeout(this.settleTimers[which]);
+      this.settleTimers[which] = 0;
+    }
+    if (this.restTimers[which]) {
+      window.clearTimeout(this.restTimers[which]);
+      this.restTimers[which] = 0;
+    }
+  }
+  /** Put a collage tile back on the table (no-op if not in fly mode). */
+  showTile(index) {
+    if (this.transition !== "fly" || index < 0) return;
+    const tile = this.tiles[index];
+    if (tile) tile.style.opacity = "1";
+  }
+  hideTile(index) {
+    if (this.transition !== "fly" || index < 0) return;
+    const tile = this.tiles[index];
+    if (tile) tile.style.opacity = "0";
+  }
+  /**
+   * Abort any in-flight settle/rest on a fly layer and restore its collage
+   * tile if a descend was interrupted mid-way (manual skip bug).
+   */
+  releaseFlyLayer(which) {
+    if (which === this.collisionIn || which === this.collisionOut) {
+      this.stopCollisionAvoidance(true);
+    }
+    const owned = this.flyOwnedIndex[which];
+    const hadRest = this.restTimers[which] !== 0;
+    this.clearFlyTimers(which);
+    if (hadRest && owned >= 0) {
+      this.showTile(owned);
+    }
+    this.flyOwnedIndex[which] = -1;
+    const isA = which === "a";
+    const fly = isA ? this.flyA : this.flyB;
+    const motion = isA ? this.motionA : this.motionB;
+    if (fly) {
+      fly.style.opacity = "0";
+      fly.style.transform = "";
+      fly.style.zIndex = FLY_Z_IDLE;
+      this.clearKenBurns(fly);
+    }
+    if (motion) removeAuraLayer(motion);
+  }
+  /**
+   * Classic crossfade look (dissolve / zoom / slide): both layers stay
+   * pinned at FOCUS_RECT, only opacity + transform animate.
+   */
+  applyClassicState(fly, state) {
+    if (state === "enter-to") {
+      fly.style.opacity = "1";
+      fly.style.transform = "translate3d(0, 0, 0) scale(1)";
+      return;
+    }
+    fly.style.opacity = "0";
+    fly.style.transform = this.classicTransform(
+      state === "enter-from" ? "in-from" : "out-to"
+    );
+  }
+  classicTransform(dir) {
+    if (this.transition === "zoom") {
+      return dir === "in-from" ? "scale(1.08)" : "scale(0.92)";
+    }
+    if (this.transition === "slide") {
+      return dir === "in-from" ? "translate3d(3%, 0, 0)" : "translate3d(-3%, 0, 0)";
+    }
+    return "translate3d(0, 0, 0) scale(1)";
+  }
+  /**
+   * Lift a photo into the focused, large view. In "fly" mode this rises from
+   * its collage slot; otherwise it crossfades in place at FOCUS_RECT using
+   * the classic dissolve/zoom/slide look.
+   */
+  ascend(which, index, instant = false, startInBack = false) {
+    const isA = which === "a";
+    const fly = isA ? this.flyA : this.flyB;
+    const motion = isA ? this.motionA : this.motionB;
+    const img = isA ? this.imgA : this.imgB;
+    const slide = this.slides[index];
+    if (!fly || !motion || !img || !slide) return;
+    this.releaseFlyLayer(which);
+    this.flyOwnedIndex[which] = index;
+    const isFly = this.transition === "fly";
+    const slot = isFly ? this.collageRects[index] ?? FOCUS_RECT : FOCUS_RECT;
+    this.hideTile(index);
+    this.clearKenBurns(fly);
+    img.src = slide.src;
+    img.alt = slide.label ?? "";
+    fly.style.zIndex = startInBack ? FLY_Z_BACK : FLY_Z_FRONT;
+    fly.style.transition = "none";
+    this.applyPercentRect(fly, slot);
+    if (isFly) {
+      fly.style.opacity = "1";
+      fly.style.transform = "";
+    } else {
+      this.applyClassicState(fly, "enter-from");
+    }
+    void fly.offsetWidth;
+    if (instant) {
+      fly.style.setProperty(
+        "--intuition-fly-fade",
+        `${Math.round(this.fadeMs * 0.6)}ms`
+      );
+    } else {
+      fly.style.removeProperty("--intuition-fly-fade");
+    }
+    const ascendMs = instant ? Math.round(this.fadeMs * 0.6) : this.fadeMs;
+    fly.style.transition = flyMotionTransition(ascendMs, !isFly);
+    if (isFly) {
+      this.applyPercentRect(fly, FOCUS_RECT);
+    } else {
+      this.applyClassicState(fly, "enter-to");
+    }
+    void this.refreshSlideFx(motion, img, slide.src);
+    const settleDelay = ascendMs;
+    this.settleTimers[which] = window.setTimeout(() => {
+      this.settleTimers[which] = 0;
+      if (this.closed) return;
+      fly.style.removeProperty("--intuition-fly-fade");
+      fly.style.transition = "";
+      if (this.kenBurnsStrength > 0) {
+        void this.applyKenBurns(fly, motion, img, index);
+      }
+    }, settleDelay + 30);
+  }
+  /**
+   * Retire a photo out of the focused view. In "fly" mode it descends back
+   * into its collage slot; otherwise it crossfades out in place.
+   */
+  descend(which, index) {
+    const isA = which === "a";
+    const fly = isA ? this.flyA : this.flyB;
+    const motion = isA ? this.motionA : this.motionB;
+    if (!fly || !motion) return;
+    if (this.settleTimers[which]) {
+      window.clearTimeout(this.settleTimers[which]);
+      this.settleTimers[which] = 0;
+    }
+    if (this.restTimers[which]) {
+      window.clearTimeout(this.restTimers[which]);
+      this.restTimers[which] = 0;
+      const prev = this.flyOwnedIndex[which];
+      if (prev >= 0 && prev !== index) this.showTile(prev);
+    }
+    this.flyOwnedIndex[which] = index;
+    this.clearKenBurns(fly);
+    const descendMs = Math.max(80, Math.round(this.fadeMs * (2 / 3)));
+    fly.style.setProperty("--intuition-fly-fade", `${descendMs}ms`);
+    fly.style.zIndex = FLY_Z_FRONT;
+    const isFly = this.transition === "fly";
+    fly.style.transition = flyMotionTransition(descendMs, !isFly);
+    void fly.offsetWidth;
+    if (isFly) {
+      const slot = this.collageRects[index] ?? FOCUS_RECT;
+      this.applyPercentRect(fly, slot);
+    } else {
+      this.applyClassicState(fly, "exit");
+    }
+    this.restTimers[which] = window.setTimeout(() => {
+      this.restTimers[which] = 0;
+      if (this.closed) return;
+      if (isFly) {
+        const handoffMs = Math.max(200, Math.min(420, Math.round(descendMs * 0.5)));
+        this.showTile(index);
+        fly.style.transition = `opacity ${handoffMs}ms ${FLY_EASE_IN_OUT}`;
+        void fly.offsetWidth;
+        fly.style.opacity = "0";
+        this.restTimers[which] = window.setTimeout(() => {
+          this.restTimers[which] = 0;
+          if (this.closed) return;
+          this.finishDescendRest(which, index, fly, motion);
+        }, handoffMs + 30);
+        return;
+      }
+      this.finishDescendRest(which, index, fly, motion);
+    }, descendMs + 40);
+  }
+  finishDescendRest(which, index, fly, motion) {
+    this.collisionOffset[which] = { x: 0, y: 0 };
+    fly.style.opacity = "0";
+    fly.style.transform = "";
+    fly.style.transition = "";
+    fly.style.zIndex = FLY_Z_IDLE;
+    fly.style.removeProperty("--intuition-fly-fade");
+    this.showTile(index);
+    if (this.flyOwnedIndex[which] === index) {
+      this.flyOwnedIndex[which] = -1;
+    }
+    removeAuraLayer(motion);
+  }
+  applyPercentRect(el, rect) {
+    el.style.left = `${rect.left}%`;
+    el.style.top = `${rect.top}%`;
+    el.style.width = `${rect.width}%`;
+    el.style.height = `${rect.height}%`;
+  }
+  /**
+   * Fit the collage "table" fully inside the stage with padding (esp. top/bottom).
+   * Works for tiny (3 photos) and huge boards: contain-scale into the padded area,
+   * then place tiles in board-local % so aspect ratios stay correct.
+   * Slot rects for fly animations are stored as % of the stage.
+   */
+  relayoutCollage() {
+    const stage = this.stageEl;
+    const board = this.collageBoard;
+    if (!stage || !board || this.slides.length === 0) return;
+    const stageW = Math.max(
+      1,
+      stage.clientWidth || stage.getBoundingClientRect().width
+    );
+    const stageH = Math.max(
+      1,
+      stage.clientHeight || stage.getBoundingClientRect().height
+    );
+    if (stageW < 2 || stageH < 2) return;
+    const n = this.slides.length;
+    const hasFullLayout = this.slides.every(
+      (s) => Number.isFinite(s.x) && Number.isFinite(s.y) && Number.isFinite(s.width) && Number.isFinite(s.height) && s.width > 0 && s.height > 0
+    );
+    let items;
+    if (hasFullLayout) {
+      items = this.slides.map((s) => ({
+        x: s.x,
+        y: s.y,
+        width: s.width,
+        height: s.height
+      }));
+    } else {
+      const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+      const rows = Math.max(1, Math.ceil(n / cols));
+      const cell = 200;
+      const gap = 16;
+      items = this.slides.map((_, i) => {
+        const r = Math.floor(i / cols);
+        const c = i % cols;
+        return {
+          x: c * (cell + gap),
+          y: r * (cell + gap),
+          width: cell,
+          height: cell
+        };
+      });
+    }
+    const box = boundingBox(items);
+    const availW = stageW * (1 - 2 * COLLAGE_PAD_X);
+    const availH = stageH * (1 - 2 * COLLAGE_PAD_Y);
+    const scale = Math.min(availW / box.width, availH / box.height);
+    const boardW = Math.max(1, box.width * scale);
+    const boardH = Math.max(1, box.height * scale);
+    const boardLeft = (stageW - boardW) / 2;
+    const boardTop = (stageH - boardH) / 2;
+    board.style.left = `${boardLeft / stageW * 100}%`;
+    board.style.top = `${boardTop / stageH * 100}%`;
+    board.style.width = `${boardW / stageW * 100}%`;
+    board.style.height = `${boardH / stageH * 100}%`;
+    board.style.right = "auto";
+    board.style.bottom = "auto";
+    this.collageRects = items.map((it, i) => {
+      const tileLeft = (it.x - box.x) * scale;
+      const tileTop = (it.y - box.y) * scale;
+      const tileW = Math.max(1, it.width * scale);
+      const tileH = Math.max(1, it.height * scale);
+      const tile = this.tiles[i];
+      if (tile) {
+        tile.style.left = `${tileLeft / boardW * 100}%`;
+        tile.style.top = `${tileTop / boardH * 100}%`;
+        tile.style.width = `${tileW / boardW * 100}%`;
+        tile.style.height = `${tileH / boardH * 100}%`;
+      }
+      return {
+        left: (boardLeft + tileLeft) / stageW * 100,
+        top: (boardTop + tileTop) / stageH * 100,
+        width: tileW / stageW * 100,
+        height: tileH / stageH * 100
+      };
+    });
   }
   activeTiltCards() {
     const cards = [];
-    for (const layer of [this.layerA, this.layerB]) {
-      if (!layer?.isConnected) continue;
-      if (!layer.classList.contains(`${ROOT_CLS}__layer--in`)) continue;
-      if (Number.parseFloat(getComputedStyle(layer).opacity || "0") < 0.12) {
+    for (const fly of [this.flyA, this.flyB]) {
+      if (!fly?.isConnected) continue;
+      if (Number.parseFloat(getComputedStyle(fly).opacity || "0") < 0.12) {
         continue;
       }
-      const photo = layer.querySelector(`.${ROOT_CLS}__photo`);
+      const photo = fly.querySelector(`.${ROOT_CLS}__photo`);
       if (photo instanceof HTMLElement) {
         cards.push({ el: photo, kind: "media" });
       }
@@ -4825,8 +5348,8 @@ var PhotoPresentation = class {
       paintAuraLayer(host, {
         color: palette?.[0] ?? "#7a6bb5",
         palette: palette ?? void 0,
-        strength: 42,
-        size: 88,
+        strength: 48,
+        size: 100,
         seed,
         shimmer: true
       });
@@ -4839,8 +5362,8 @@ var PhotoPresentation = class {
       }
       paintAuraLayer(host, {
         color: "#7a6bb5",
-        strength: 36,
-        size: 84,
+        strength: 42,
+        size: 96,
         seed,
         shimmer: true
       });
@@ -4860,21 +5383,25 @@ var PhotoPresentation = class {
     this.root.style.setProperty("--intuition-present-c2", c2);
     this.root.style.setProperty("--intuition-present-c3", c3);
   }
-  async applyKenBurns(layer, motion, img, index) {
+  async applyKenBurns(fly, motion, img, index) {
     await waitForImage(img);
     if (this.closed) return;
     const amp = this.kenBurnsAmplitude(img);
     if (amp <= 0.01) {
-      this.clearKenBurns(layer);
+      this.clearKenBurns(fly);
       return;
     }
     const variant = KEN_BURNS_VARIANTS[index % KEN_BURNS_VARIANTS.length];
     const dur = this.intervalMs + this.fadeMs + 80;
-    motion.style.transform = "";
+    motion.style.transform = "scale(1) translate(0%, 0%)";
     motion.style.animationName = "";
     motion.style.setProperty("--intuition-kb-amp", amp.toFixed(3));
-    layer.classList.add(variant);
+    fly.classList.add(variant);
+    void motion.offsetWidth;
+    motion.style.transform = "";
     motion.style.animationDuration = `${dur}ms`;
+    motion.style.animationTimingFunction = "linear";
+    motion.style.animationFillMode = "forwards";
   }
   /** Portrait → weaker zoom; landscape → stronger. Strength 0–100 scales overall. */
   kenBurnsAmplitude(img) {
@@ -4888,20 +5415,9 @@ var PhotoPresentation = class {
     else if (ar > 1.25) aspectMul = 1.2;
     return Math.min(1.35, Math.max(0, base * aspectMul));
   }
-  freezeKenBurns(layer) {
-    const motion = layer.querySelector(`.${ROOT_CLS}__motion`);
-    if (!(motion instanceof HTMLElement)) return;
-    const computed = getComputedStyle(motion).transform;
-    for (const v of KEN_BURNS_VARIANTS) layer.classList.remove(v);
-    motion.style.animationName = "none";
-    motion.style.animationDuration = "";
-    if (computed && computed !== "none") {
-      motion.style.transform = computed;
-    }
-  }
-  clearKenBurns(layer) {
-    for (const v of KEN_BURNS_VARIANTS) layer.classList.remove(v);
-    const motion = layer.querySelector(`.${ROOT_CLS}__motion`);
+  clearKenBurns(fly) {
+    for (const v of KEN_BURNS_VARIANTS) fly.classList.remove(v);
+    const motion = fly.querySelector(`.${ROOT_CLS}__motion`);
     if (motion instanceof HTMLElement) {
       motion.style.animationDuration = "";
       motion.style.animationName = "";
@@ -6894,7 +7410,16 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       if (!src) continue;
       const path = node.file?.path ?? node.filePath ?? node.getData?.()?.file ?? "";
       const label = path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path || void 0;
-      slides.push({ src, label });
+      const nx = node.x;
+      const ny = node.y;
+      const nw = node.width;
+      const nh = node.height;
+      const hasLayout = Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(nw) && Number.isFinite(nh) && nw > 0 && nh > 0;
+      slides.push({
+        src,
+        label,
+        ...hasLayout ? { x: nx, y: ny, width: nw, height: nh } : {}
+      });
     }
     if (slides.length === 0) {
       new import_obsidian5.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
@@ -6908,7 +7433,6 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     }
     const ok = present.start(host, slides, {
       settings: this.settings.presentation,
-      sparklesConfig: this.settings.vibeSparkles,
       /* Half of canvas vibe tilt; no cursor glare in slideshow. */
       tiltStrength: Math.round(
         this.clampVibeStrength(this.settings.vibeStrength) * 0.5

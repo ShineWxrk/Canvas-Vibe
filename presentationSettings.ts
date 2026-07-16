@@ -1,6 +1,6 @@
 /** Slideshow / presentation preferences (persisted in plugin settings). */
 
-export type PresentationTransition = "dissolve" | "zoom" | "slide";
+export type PresentationTransition = "dissolve" | "zoom" | "slide" | "fly";
 
 export interface PresentationSettings {
 	/** Seconds each slide stays fully visible (before fade). */
@@ -22,7 +22,7 @@ export interface PresentationSettings {
 
 export const PRESENTATION_LIMITS = {
 	intervalSec: { min: 2, max: 30 },
-	fadeMs: { min: 200, max: 3000 },
+	fadeMs: { min: 200, max: 5000 },
 	kenBurnsStrength: { min: 0, max: 100 },
 } as const;
 
@@ -42,7 +42,13 @@ export const DEFAULT_PRESENTATION_SETTINGS: PresentationSettings = {
 export function normalizePresentationTransition(
 	value: unknown,
 ): PresentationTransition {
-	if (value === "zoom" || value === "slide" || value === "dissolve") return value;
+	if (
+		value === "zoom" ||
+		value === "slide" ||
+		value === "dissolve" ||
+		value === "fly"
+	)
+		return value;
 	return DEFAULT_PRESENTATION_SETTINGS.transition;
 }
 
