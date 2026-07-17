@@ -80,6 +80,7 @@ import {
 	DOM_HOOK_ATTR,
 	ImageResizeController,
 } from "./imageResize";
+import { ImageSwapController } from "./imageSwap";
 
 const CANVAS_VIEW_TYPE = "canvas";
 const BUTTON_ATTR = "data-intuition-canvas-labels-toggle";
@@ -88,6 +89,7 @@ const VIBE_BTN_ATTR = "data-intuition-canvas-vibe-toggle";
 const CHROME_BTN_ATTR = "data-intuition-canvas-chrome-toggle";
 const TEXT_BTN_ATTR = "data-intuition-canvas-add-text";
 const COLLAGE_BTN_ATTR = "data-intuition-canvas-collage";
+const SWAP_BTN_ATTR = "data-intuition-canvas-swap";
 const HIDE_CLASS = "intuition-canvas-hide-image-labels";
 const HIDE_AURAS_CLASS = "intuition-canvas-hide-auras";
 const TEXT_HOOK_ATTR = "data-intuition-canvas-text-hook";
@@ -170,6 +172,10 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	private imageResize = new ImageResizeController({
 		registerDomEvent: this.registerDomEvent.bind(this),
 	});
+	private imageSwap = new ImageSwapController({
+		registerDomEvent: this.registerDomEvent.bind(this),
+		isResizeActive: () => this.imageResize.isActive,
+	});
 
 	async onload() {
 		await this.loadSettings();
@@ -250,6 +256,22 @@ export default class IntuitionCanvasPlugin extends Plugin {
 				if (checking) return images.length >= 2;
 				this.arrangeSelectedImagesCollage(leaf.view as CanvasViewLike);
 				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "swap-selected-images",
+			name: "Swap two selected images",
+			checkCallback: (checking) => {
+				const leaf = this.getActiveCanvasLeaf();
+				if (!leaf) return false;
+				const images = this.getSelectedImageNodes(
+					leaf.view as CanvasViewLike,
+				);
+				if (checking) return images.length === 2;
+				return this.imageSwap.swapTwoSelected(
+					leaf.view as CanvasViewLike,
+				);
 			},
 		});
 
@@ -368,6 +390,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		document.querySelectorAll(`[${VIBE_BTN_ATTR}]`).forEach((el) => el.remove());
 		document.querySelectorAll(`[${TEXT_BTN_ATTR}]`).forEach((el) => el.remove());
 		document.querySelectorAll(`[${COLLAGE_BTN_ATTR}]`).forEach((el) => el.remove());
+		document.querySelectorAll(`[${SWAP_BTN_ATTR}]`).forEach((el) => el.remove());
 		document.querySelectorAll(".intuition-vibe-glare").forEach((el) => el.remove());
 		document
 			.querySelectorAll("[data-intuition-vibe-tilting]")
@@ -661,7 +684,9 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			this.injectChromeToggle(leaf);
 			this.injectAddTextButton(leaf);
 			this.injectCollageButton(leaf);
+			this.injectSwapButton(leaf);
 			this.imageResize.install(leaf);
+			this.imageSwap.install(leaf);
 			this.ensureTextPanel(leaf);
 			this.ensureImagePanel(leaf);
 			this.ensureCanvasPanel(leaf);
@@ -725,7 +750,8 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		const root = canvasRoot(view);
 
 		const suspendOpts = {
-			getSuspended: () => this.imageResize.isActive,
+			getSuspended: () =>
+				this.imageResize.isActive || this.imageSwap.isActive,
 			getSelectionCount: () => {
 				const sel = view.canvas?.selection;
 				if (sel) return sel.size;
@@ -1111,6 +1137,28 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			attr: COLLAGE_BTN_ATTR,
 			sync: (button) => this.syncCollageButton(leaf, button),
 			onClick: () => this.arrangeSelectedImagesCollage(view),
+		});
+	}
+
+	private injectSwapButton(leaf: WorkspaceLeaf) {
+		const view = leaf.view as CanvasViewLike;
+		const controls =
+			view.canvas?.canvasControlsEl ??
+			view.containerEl.querySelector<HTMLElement>(".canvas-controls");
+		if (!controls) return;
+
+		injectControlButton(controls, {
+			attr: SWAP_BTN_ATTR,
+			sync: (button) => {
+				syncControlButton(button, {
+					title: "Поменять две фото местами",
+					iconName: "arrow-left-right",
+				});
+			},
+			onClick: () => {
+				if (this.imageSwap.swapTwoSelected(view)) return;
+				new Notice("Выдели ровно 2 фотографии", 1600);
+			},
 		});
 	}
 

@@ -6622,6 +6622,325 @@ function applyAspectLock(node, start, ratio, movesLeft, movesTop) {
   node.render?.();
 }
 
+// imageSwap.ts
+var HOOK_ATTR3 = "data-intuition-canvas-swap-hook";
+var GHOST_CLS = "intuition-swap-ghost";
+var DIM_CLS = "intuition-swap-dimmed";
+var MOVE_THRESHOLD_PX = 8;
+var PREVIEW_MS = 320;
+var ImageSwapController = class {
+  constructor(deps) {
+    this.deps = deps;
+    this.active = false;
+    this.source = null;
+    this.startX = 0;
+    this.startY = 0;
+    this.pointerStartX = 0;
+    this.pointerStartY = 0;
+    this.moved = false;
+    this.view = null;
+    this.homeLeft = 0;
+    this.homeTop = 0;
+    this.homeWidth = 0;
+    this.homeHeight = 0;
+    this.hoverTarget = null;
+    this.preview = null;
+  }
+  get isActive() {
+    return this.active;
+  }
+  install(leaf) {
+    const view = leaf.view;
+    const root = canvasRoot(view);
+    root.querySelectorAll(
+      ".canvas-node.intuition-swap-preview, .canvas-node.intuition-swap-dimmed"
+    ).forEach((el) => {
+      el.classList.remove(
+        "intuition-swap-preview",
+        "intuition-swap-dimmed"
+      );
+      el.style.removeProperty("transform");
+      el.style.removeProperty("transition");
+      el.style.removeProperty("opacity");
+    });
+    document.querySelectorAll(`.${GHOST_CLS}`).forEach((el) => el.remove());
+    if (root.getAttribute(HOOK_ATTR3) === "1") return;
+    root.setAttribute(HOOK_ATTR3, "1");
+    this.deps.registerDomEvent(root, "pointerdown", (event) => {
+      this.onPointerDown(view, event);
+    });
+  }
+  swapTwoSelected(view) {
+    const images = getSelectedImages(view);
+    if (images.length !== 2) return false;
+    const a = images[0];
+    const b = images[1];
+    const ax = a.x;
+    const ay = a.y;
+    const bx = b.x;
+    const by = b.y;
+    a.x = Math.round(bx);
+    a.y = Math.round(by);
+    b.x = Math.round(ax);
+    b.y = Math.round(ay);
+    a.render?.();
+    b.render?.();
+    view.canvas?.requestSave?.();
+    a.canvas?.requestSave?.();
+    return true;
+  }
+  onPointerDown(view, event) {
+    if (this.active) return;
+    if (!event.altKey || event.button !== 0) return;
+    if (this.deps.isResizeActive?.()) return;
+    if (looksLikeResizeHandle(event.target)) return;
+    const source = findImageNodeFromEvent(view, event);
+    if (!source || source.width <= 0 || source.height <= 0) return;
+    if (!isNodeSelected(view, source)) return;
+    const home = source.nodeEl?.getBoundingClientRect();
+    this.active = true;
+    this.source = source;
+    this.startX = source.x;
+    this.startY = source.y;
+    this.homeLeft = home?.left ?? event.clientX;
+    this.homeTop = home?.top ?? event.clientY;
+    this.homeWidth = home?.width ?? source.width;
+    this.homeHeight = home?.height ?? source.height;
+    this.pointerStartX = event.clientX;
+    this.pointerStartY = event.clientY;
+    this.moved = false;
+    this.view = view;
+    this.hoverTarget = null;
+    const onMove = (ev) => {
+      if (!this.active || !this.source || !this.view) return;
+      const dx = ev.clientX - this.pointerStartX;
+      const dy = ev.clientY - this.pointerStartY;
+      if (dx * dx + dy * dy >= MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
+        this.moved = true;
+      }
+      if (!this.moved) return;
+      const hit = findImageAtPoint(
+        this.view,
+        ev.clientX,
+        ev.clientY,
+        this.source.id
+      );
+      this.hoverTarget = hit;
+      this.setPreviewTarget(hit);
+    };
+    const stop = (ev) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      this.finish(ev);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }
+  setPreviewTarget(next) {
+    const cur = this.preview;
+    if (cur?.node.id === next?.id) return;
+    if (cur) this.dismissGhost(cur, true);
+    this.preview = null;
+    if (!next) return;
+    const el = next.nodeEl;
+    if (!el?.isConnected) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 4 || rect.height < 4) return;
+    const ghost = buildGhost(el, rect);
+    document.body.appendChild(ghost);
+    el.classList.add(DIM_CLS);
+    this.preview = {
+      node: next,
+      ghost,
+      fromLeft: rect.left,
+      fromTop: rect.top,
+      fromWidth: rect.width,
+      fromHeight: rect.height
+    };
+    requestAnimationFrame(() => {
+      if (this.preview?.ghost !== ghost) return;
+      ghost.style.left = `${this.homeLeft}px`;
+      ghost.style.top = `${this.homeTop}px`;
+      ghost.style.width = `${this.homeWidth}px`;
+      ghost.style.height = `${this.homeHeight}px`;
+    });
+  }
+  /** Fly ghost home (or snap-remove). */
+  dismissGhost(state, animate) {
+    const { node, ghost, fromLeft, fromTop, fromWidth, fromHeight } = state;
+    node.nodeEl?.classList.remove(DIM_CLS);
+    if (!animate || !ghost.isConnected) {
+      ghost.remove();
+      return;
+    }
+    ghost.style.left = `${fromLeft}px`;
+    ghost.style.top = `${fromTop}px`;
+    ghost.style.width = `${fromWidth}px`;
+    ghost.style.height = `${fromHeight}px`;
+    const done = () => {
+      ghost.removeEventListener("transitionend", done);
+      ghost.remove();
+    };
+    ghost.addEventListener("transitionend", done);
+    window.setTimeout(done, PREVIEW_MS + 80);
+  }
+  clearPreviewImmediate() {
+    const state = this.preview;
+    this.preview = null;
+    if (!state) return;
+    state.node.nodeEl?.classList.remove(DIM_CLS);
+    state.ghost.remove();
+  }
+  finish(event) {
+    const source = this.source;
+    const view = this.view;
+    const startX = this.startX;
+    const startY = this.startY;
+    const moved = this.moved;
+    const hovered = this.hoverTarget;
+    this.active = false;
+    this.source = null;
+    this.view = null;
+    this.hoverTarget = null;
+    this.clearPreviewImmediate();
+    if (!source || !view || !moved) return;
+    const target = hovered ?? findImageAtPoint(view, event.clientX, event.clientY, source.id);
+    if (!target) return;
+    const tx = target.x;
+    const ty = target.y;
+    source.x = Math.round(tx);
+    source.y = Math.round(ty);
+    target.x = Math.round(startX);
+    target.y = Math.round(startY);
+    source.render?.();
+    target.render?.();
+    view.canvas?.requestSave?.();
+    source.canvas?.requestSave?.();
+  }
+};
+function buildGhost(sourceEl, rect) {
+  const ghost = document.createElement("div");
+  ghost.className = GHOST_CLS;
+  ghost.setAttribute("aria-hidden", "true");
+  const img = sourceEl.querySelector("img");
+  if (img) {
+    const clone = img.cloneNode(true);
+    clone.removeAttribute("id");
+    ghost.appendChild(clone);
+  } else {
+    const thumb = sourceEl.querySelector(
+      ".canvas-node-content, .media-embed, .image-embed"
+    );
+    if (thumb) {
+      const clone = thumb.cloneNode(true);
+      ghost.appendChild(clone);
+    }
+  }
+  const radius = window.getComputedStyle(sourceEl).borderRadius || "8px";
+  ghost.style.cssText = [
+    "position:fixed",
+    `left:${rect.left}px`,
+    `top:${rect.top}px`,
+    `width:${rect.width}px`,
+    `height:${rect.height}px`,
+    `border-radius:${radius}`,
+    "overflow:hidden",
+    "pointer-events:none",
+    "z-index:10000",
+    `transition:left ${PREVIEW_MS}ms cubic-bezier(0.22, 1, 0.36, 1), top ${PREVIEW_MS}ms cubic-bezier(0.22, 1, 0.36, 1), width ${PREVIEW_MS}ms cubic-bezier(0.22, 1, 0.36, 1), height ${PREVIEW_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+    "box-shadow:0 12px 28px rgba(0,0,0,0.28)"
+  ].join(";");
+  return ghost;
+}
+function getSelectedImages(view) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (node) => {
+    if (!isImageNode(node) || seen.has(node.id)) return;
+    seen.add(node.id);
+    out.push(node);
+  };
+  const sel = view.canvas?.selection;
+  if (sel) {
+    for (const item of sel) push(item);
+  }
+  if (out.length === 0 && view.canvas?.nodes) {
+    for (const node of view.canvas.nodes.values()) {
+      if (node.nodeEl?.classList.contains("is-selected")) push(node);
+    }
+  }
+  return out;
+}
+function looksLikeResizeHandle(target) {
+  let el = target;
+  for (let i = 0; i < 6 && el; i++) {
+    const cursor = window.getComputedStyle(el).cursor.toLowerCase();
+    if (cursor.includes("resize") || cursor === "col-resize" || cursor === "row-resize") {
+      return true;
+    }
+    const cls = el.className?.toString?.().toLowerCase?.() ?? "";
+    if (/resiz/.test(cls)) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+function isNodeSelected(view, node) {
+  const sel = view.canvas?.selection;
+  if (sel) {
+    for (const item of sel) {
+      if (item.id === node.id) return true;
+    }
+  }
+  return !!node.nodeEl?.classList.contains("is-selected");
+}
+function findImageNodeFromEvent(view, event) {
+  const nodes = view.canvas?.nodes;
+  if (!nodes) return null;
+  const hit = event.target?.closest?.(
+    ".canvas-node"
+  );
+  if (!hit) return null;
+  for (const node of nodes.values()) {
+    const el = node.nodeEl;
+    if (!el) continue;
+    if (el === hit || el.contains(hit) || hit.contains(el)) {
+      if (isImageNode(node)) return node;
+      return null;
+    }
+  }
+  const id = hit.getAttribute("data-node-id") ?? hit.dataset.nodeId;
+  if (id && nodes.has(id)) {
+    const node = nodes.get(id);
+    return isImageNode(node) ? node : null;
+  }
+  return null;
+}
+function findImageAtPoint(view, clientX, clientY, excludeId) {
+  const nodes = view.canvas?.nodes;
+  if (!nodes) return null;
+  let best = null;
+  let bestArea = Infinity;
+  for (const node of nodes.values()) {
+    if (node.id === excludeId) continue;
+    if (!isImageNode(node)) continue;
+    const el = node.nodeEl;
+    if (!el?.isConnected) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) continue;
+    if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) {
+      continue;
+    }
+    const area = r.width * r.height;
+    if (area < bestArea) {
+      bestArea = area;
+      best = node;
+    }
+  }
+  return best;
+}
+
 // main.ts
 var CANVAS_VIEW_TYPE = "canvas";
 var BUTTON_ATTR = "data-intuition-canvas-labels-toggle";
@@ -6630,6 +6949,7 @@ var VIBE_BTN_ATTR = "data-intuition-canvas-vibe-toggle";
 var CHROME_BTN_ATTR = "data-intuition-canvas-chrome-toggle";
 var TEXT_BTN_ATTR = "data-intuition-canvas-add-text";
 var COLLAGE_BTN_ATTR = "data-intuition-canvas-collage";
+var SWAP_BTN_ATTR = "data-intuition-canvas-swap";
 var HIDE_CLASS = "intuition-canvas-hide-image-labels";
 var HIDE_AURAS_CLASS = "intuition-canvas-hide-auras";
 var TEXT_HOOK_ATTR = "data-intuition-canvas-text-hook";
@@ -6660,6 +6980,10 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     });
     this.imageResize = new ImageResizeController({
       registerDomEvent: this.registerDomEvent.bind(this)
+    });
+    this.imageSwap = new ImageSwapController({
+      registerDomEvent: this.registerDomEvent.bind(this),
+      isResizeActive: () => this.imageResize.isActive
     });
   }
   async onload() {
@@ -6732,6 +7056,21 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
         if (checking) return images.length >= 2;
         this.arrangeSelectedImagesCollage(leaf.view);
         return true;
+      }
+    });
+    this.addCommand({
+      id: "swap-selected-images",
+      name: "Swap two selected images",
+      checkCallback: (checking) => {
+        const leaf = this.getActiveCanvasLeaf();
+        if (!leaf) return false;
+        const images = this.getSelectedImageNodes(
+          leaf.view
+        );
+        if (checking) return images.length === 2;
+        return this.imageSwap.swapTwoSelected(
+          leaf.view
+        );
       }
     });
     this.addCommand({
@@ -6824,6 +7163,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     document.querySelectorAll(`[${VIBE_BTN_ATTR}]`).forEach((el) => el.remove());
     document.querySelectorAll(`[${TEXT_BTN_ATTR}]`).forEach((el) => el.remove());
     document.querySelectorAll(`[${COLLAGE_BTN_ATTR}]`).forEach((el) => el.remove());
+    document.querySelectorAll(`[${SWAP_BTN_ATTR}]`).forEach((el) => el.remove());
     document.querySelectorAll(".intuition-vibe-glare").forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-vibe-tilting]").forEach((el) => {
       el.style.removeProperty("transform");
@@ -7068,7 +7408,9 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       this.injectChromeToggle(leaf);
       this.injectAddTextButton(leaf);
       this.injectCollageButton(leaf);
+      this.injectSwapButton(leaf);
       this.imageResize.install(leaf);
+      this.imageSwap.install(leaf);
       this.ensureTextPanel(leaf);
       this.ensureImagePanel(leaf);
       this.ensureCanvasPanel(leaf);
@@ -7124,7 +7466,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     const view = leaf.view;
     const root = canvasRoot(view);
     const suspendOpts = {
-      getSuspended: () => this.imageResize.isActive,
+      getSuspended: () => this.imageResize.isActive || this.imageSwap.isActive,
       getSelectionCount: () => {
         const sel = view.canvas?.selection;
         if (sel) return sel.size;
@@ -7427,6 +7769,24 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       attr: COLLAGE_BTN_ATTR,
       sync: (button) => this.syncCollageButton(leaf, button),
       onClick: () => this.arrangeSelectedImagesCollage(view)
+    });
+  }
+  injectSwapButton(leaf) {
+    const view = leaf.view;
+    const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
+    if (!controls) return;
+    injectControlButton(controls, {
+      attr: SWAP_BTN_ATTR,
+      sync: (button) => {
+        syncControlButton(button, {
+          title: "\u041F\u043E\u043C\u0435\u043D\u044F\u0442\u044C \u0434\u0432\u0435 \u0444\u043E\u0442\u043E \u043C\u0435\u0441\u0442\u0430\u043C\u0438",
+          iconName: "arrow-left-right"
+        });
+      },
+      onClick: () => {
+        if (this.imageSwap.swapTwoSelected(view)) return;
+        new import_obsidian7.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0440\u043E\u0432\u043D\u043E 2 \u0444\u043E\u0442\u043E\u0433\u0440\u0430\u0444\u0438\u0438", 1600);
+      }
     });
   }
   syncCollageButton(_leaf, button) {

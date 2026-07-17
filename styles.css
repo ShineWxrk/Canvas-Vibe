@@ -102,6 +102,26 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	color: var(--interactive-accent);
 }
 
+/* Alt-swap preview: floating clone outside the canvas scale() tree */
+.intuition-swap-ghost {
+	pointer-events: none;
+	z-index: 10000;
+}
+
+.intuition-swap-ghost img,
+.intuition-swap-ghost .media-embed,
+.intuition-swap-ghost .image-embed,
+.intuition-swap-ghost .canvas-node-content {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.canvas-node.intuition-swap-dimmed {
+	opacity: 0.28;
+}
+
 /* ── Vibe mode: near-cursor tilt + soft glare (media); text glow ─── */
 
 /*
