@@ -6628,6 +6628,7 @@ var GHOST_CLS = "intuition-swap-ghost";
 var DIM_CLS = "intuition-swap-dimmed";
 var MOVE_THRESHOLD_PX = 8;
 var PREVIEW_MS = 320;
+var COMMIT_RETRY_MS = [0, 16, 48, 120];
 var ImageSwapController = class {
   constructor(deps) {
     this.deps = deps;
@@ -6686,18 +6687,7 @@ var ImageSwapController = class {
     if (images.length !== 2) return false;
     const a = images[0];
     const b = images[1];
-    const ax = a.x;
-    const ay = a.y;
-    const bx = b.x;
-    const by = b.y;
-    a.x = Math.round(bx);
-    a.y = Math.round(by);
-    b.x = Math.round(ax);
-    b.y = Math.round(ay);
-    a.render?.();
-    b.render?.();
-    view.canvas?.requestSave?.();
-    a.canvas?.requestSave?.();
+    commitSwap(a, b, a.x, a.y, b.x, b.y, view.canvas);
     return true;
   }
   /**
@@ -6882,18 +6872,63 @@ var ImageSwapController = class {
     if (!source || !view || !moved || !wantSwap) return;
     const target = hovered ?? findImageAtPoint(view, event.clientX, event.clientY, source.id);
     if (!target) return;
-    const tx = target.x;
-    const ty = target.y;
-    source.x = Math.round(tx);
-    source.y = Math.round(ty);
-    target.x = Math.round(startX);
-    target.y = Math.round(startY);
-    source.render?.();
-    target.render?.();
-    view.canvas?.requestSave?.();
-    source.canvas?.requestSave?.();
+    const targetX = readNodeX(target);
+    const targetY = readNodeY(target);
+    commitSwap(source, target, startX, startY, targetX, targetY, view.canvas);
   }
 };
+function commitSwap(a, b, aHomeX, aHomeY, bHomeX, bHomeY, canvas) {
+  const ax = Math.round(aHomeX);
+  const ay = Math.round(aHomeY);
+  const bx = Math.round(bHomeX);
+  const by = Math.round(bHomeY);
+  const apply = () => {
+    scrubNodeChrome(a);
+    scrubNodeChrome(b);
+    placeNode(a, bx, by);
+    placeNode(b, ax, ay);
+    canvas?.markViewportChanged?.();
+    canvas?.requestFrame?.();
+    canvas?.requestSave?.();
+    a.canvas?.requestSave?.();
+  };
+  apply();
+  for (const ms of COMMIT_RETRY_MS) {
+    window.setTimeout(apply, ms);
+  }
+}
+function readNodeX(node) {
+  const data = node.getData?.();
+  if (typeof data?.x === "number" && Number.isFinite(data.x)) return data.x;
+  return node.x;
+}
+function readNodeY(node) {
+  const data = node.getData?.();
+  if (typeof data?.y === "number" && Number.isFinite(data.y)) return data.y;
+  return node.y;
+}
+function placeNode(node, x, y) {
+  const nx = Math.round(x);
+  const ny = Math.round(y);
+  if (typeof node.setData === "function") {
+    const prev = node.getData?.() ?? { id: node.id };
+    node.setData({ ...prev, x: nx, y: ny });
+  } else if (typeof node.moveTo === "function") {
+    node.moveTo(nx, ny);
+  }
+  node.x = nx;
+  node.y = ny;
+  node.render?.();
+}
+function scrubNodeChrome(node) {
+  const el = node.nodeEl;
+  if (!el) return;
+  el.classList.remove(DIM_CLS, "intuition-swap-preview");
+  el.style.removeProperty("transform");
+  el.style.removeProperty("transition");
+  el.style.removeProperty("opacity");
+  el.style.removeProperty("will-change");
+}
 function buildGhost(sourceEl, rect) {
   const ghost = document.createElement("div");
   ghost.className = GHOST_CLS;

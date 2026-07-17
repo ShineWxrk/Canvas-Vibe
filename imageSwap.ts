@@ -9,6 +9,17 @@ const GHOST_CLS = "intuition-swap-ghost";
 const DIM_CLS = "intuition-swap-dimmed";
 const MOVE_THRESHOLD_PX = 8;
 const PREVIEW_MS = 320;
+/** Re-apply after Obsidian finishes its native drag commit. */
+const COMMIT_RETRY_MS = [0, 16, 48, 120];
+
+interface CanvasNodeData {
+	id?: string;
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+	[key: string]: unknown;
+}
 
 export interface CanvasNodeLike {
 	id: string;
@@ -19,6 +30,9 @@ export interface CanvasNodeLike {
 	nodeEl?: HTMLElement | null;
 	render?: () => void;
 	canvas?: { requestSave?: () => void };
+	getData?: () => CanvasNodeData;
+	setData?: (data: CanvasNodeData, addHistory?: boolean) => void;
+	moveTo?: (x: number, y: number) => void;
 }
 
 interface CanvasLike {
@@ -27,6 +41,8 @@ interface CanvasLike {
 	nodes?: Map<string, CanvasNodeLike>;
 	selection?: Set<CanvasNodeLike>;
 	requestSave?: () => void;
+	markViewportChanged?: () => void;
+	requestFrame?: () => void;
 }
 
 export interface CanvasViewLike {
@@ -125,18 +141,7 @@ export class ImageSwapController {
 		if (images.length !== 2) return false;
 		const a = images[0];
 		const b = images[1];
-		const ax = a.x;
-		const ay = a.y;
-		const bx = b.x;
-		const by = b.y;
-		a.x = Math.round(bx);
-		a.y = Math.round(by);
-		b.x = Math.round(ax);
-		b.y = Math.round(ay);
-		a.render?.();
-		b.render?.();
-		view.canvas?.requestSave?.();
-		a.canvas?.requestSave?.();
+		commitSwap(a, b, a.x, a.y, b.x, b.y, view.canvas);
 		return true;
 	}
 
@@ -367,19 +372,87 @@ export class ImageSwapController {
 			findImageAtPoint(view, event.clientX, event.clientY, source.id);
 		if (!target) return;
 
-		const tx = target.x;
-		const ty = target.y;
-
-		source.x = Math.round(tx);
-		source.y = Math.round(ty);
-		target.x = Math.round(startX);
-		target.y = Math.round(startY);
-
-		source.render?.();
-		target.render?.();
-		view.canvas?.requestSave?.();
-		source.canvas?.requestSave?.();
+		/*
+		 * Freeze both slots before Obsidian's late drag-write. Source may
+		 * already have a transient drop x/y; target still holds its home.
+		 */
+		const targetX = readNodeX(target);
+		const targetY = readNodeY(target);
+		commitSwap(source, target, startX, startY, targetX, targetY, view.canvas);
 	}
+}
+
+/**
+ * Persist a two-node place-swap through setData (not just node.x/y) and
+ * re-apply a few times so Obsidian's native drag commit cannot leave the
+ * model/DOM out of sync — that desync is what blanks nodes on pan/zoom.
+ */
+function commitSwap(
+	a: CanvasNodeLike,
+	b: CanvasNodeLike,
+	aHomeX: number,
+	aHomeY: number,
+	bHomeX: number,
+	bHomeY: number,
+	canvas?: CanvasLike | null,
+) {
+	const ax = Math.round(aHomeX);
+	const ay = Math.round(aHomeY);
+	const bx = Math.round(bHomeX);
+	const by = Math.round(bHomeY);
+
+	const apply = () => {
+		scrubNodeChrome(a);
+		scrubNodeChrome(b);
+		placeNode(a, bx, by);
+		placeNode(b, ax, ay);
+		canvas?.markViewportChanged?.();
+		canvas?.requestFrame?.();
+		canvas?.requestSave?.();
+		a.canvas?.requestSave?.();
+	};
+
+	apply();
+	for (const ms of COMMIT_RETRY_MS) {
+		window.setTimeout(apply, ms);
+	}
+}
+
+function readNodeX(node: CanvasNodeLike): number {
+	const data = node.getData?.();
+	if (typeof data?.x === "number" && Number.isFinite(data.x)) return data.x;
+	return node.x;
+}
+
+function readNodeY(node: CanvasNodeLike): number {
+	const data = node.getData?.();
+	if (typeof data?.y === "number" && Number.isFinite(data.y)) return data.y;
+	return node.y;
+}
+
+function placeNode(node: CanvasNodeLike, x: number, y: number) {
+	const nx = Math.round(x);
+	const ny = Math.round(y);
+	if (typeof node.setData === "function") {
+		const prev = node.getData?.() ?? { id: node.id };
+		node.setData({ ...prev, x: nx, y: ny });
+	} else if (typeof node.moveTo === "function") {
+		node.moveTo(nx, ny);
+	}
+	node.x = nx;
+	node.y = ny;
+	node.render?.();
+}
+
+/** Clear leftover inline styles that desync Canvas culling from paint. */
+function scrubNodeChrome(node: CanvasNodeLike) {
+	const el = node.nodeEl;
+	if (!el) return;
+	el.classList.remove(DIM_CLS, "intuition-swap-preview");
+	el.style.removeProperty("transform");
+	el.style.removeProperty("transition");
+	el.style.removeProperty("opacity");
+	el.style.removeProperty("will-change");
 }
 
 function buildGhost(sourceEl: HTMLElement, rect: DOMRect): HTMLElement {
