@@ -6289,7 +6289,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       });
     });
   }
-  /** Suspend media tilt briefly while zoom is still settling. */
+  /** Suspend media tilt + hide auras briefly while zoom is still settling. */
   setCanvasZoomSettling(leaf, on) {
     const id = leaf.id ?? String(leaf);
     const view = leaf.view;

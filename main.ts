@@ -1137,7 +1137,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		});
 	}
 
-	/** Suspend media tilt briefly while zoom is still settling. */
+	/** Suspend media tilt + hide auras briefly while zoom is still settling. */
 	private setCanvasZoomSettling(leaf: WorkspaceLeaf, on: boolean) {
 		const id = (leaf as WorkspaceLeaf & { id?: string }).id ?? String(leaf);
 		const view = leaf.view as CanvasViewLike;

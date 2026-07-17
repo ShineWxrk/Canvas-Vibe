@@ -86,6 +86,17 @@ body.intuition-canvas-hide-auras .intuition-image-aura,
 	visibility: hidden !important;
 }
 
+/* Hide board auras while zoom is changing — reappear after idle debounce. */
+.intuition-canvas-zoom-settling .canvas-node .intuition-image-aura {
+	display: none !important;
+	visibility: hidden !important;
+	opacity: 0 !important;
+	pointer-events: none !important;
+	animation: none !important;
+	filter: none !important;
+	will-change: auto !important;
+}
+
 /* Active state for our control button */
 .canvas-controls .intuition-canvas-toggle.is-active {
 	color: var(--interactive-accent);
