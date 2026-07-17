@@ -81,6 +81,7 @@ import {
 	ImageResizeController,
 } from "./imageResize";
 import { ImageSwapController } from "./imageSwap";
+import { ImageCropPanController } from "./imageCrop";
 import { commitNodeRects, type PlaceableNode } from "./canvasNodePlace";
 
 const CANVAS_VIEW_TYPE = "canvas";
@@ -177,6 +178,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		registerDomEvent: this.registerDomEvent.bind(this),
 		isResizeActive: () => this.imageResize.isActive,
 	});
+	private imageCropPan = new ImageCropPanController();
 
 	async onload() {
 		await this.loadSettings();
@@ -224,7 +226,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 
 		this.addCommand({
 			id: "toggle-vibe-mode",
-			name: "Toggle Canvas vibe tilt mode",
+			name: "Toggle make pretty",
 			checkCallback: (checking) => {
 				const canvasOpen =
 					this.app.workspace.getLeavesOfType(CANVAS_VIEW_TYPE).length > 0;
@@ -308,6 +310,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	}
 
 	onunload() {
+		this.imageCropPan.stop();
 		this.zoomFx.destroy();
 		for (const panel of this.textPanels.values()) panel.el.remove();
 		this.textPanels.clear();
@@ -668,24 +671,29 @@ export default class IntuitionCanvasPlugin extends Plugin {
 	}
 
 	private async toggleVibeMode() {
-		this.settings.vibeMode = !this.settings.vibeMode;
+		const on = !this.settings.vibeMode;
+		this.settings.vibeMode = on;
+		/* Make pretty also gates auras (toolbar aura button removed). */
+		this.settings.hideAuras = !on;
 		await this.saveSettings();
 		this.applyVibeMode();
-		new Notice(
-			this.settings.vibeMode ? "Вайб-режим: наклон карточек" : "Вайб-режим выключен",
-			1400,
-		);
+		this.applyAuraVisibility();
+		new Notice(on ? "make pretty" : "make pretty off", 1200);
 	}
 
 	private enhanceAllCanvases() {
 		for (const leaf of this.app.workspace.getLeavesOfType(CANVAS_VIEW_TYPE)) {
+			/* Drop retired toolbar buttons left from older builds. */
+			leaf.view.containerEl
+				.querySelectorAll(
+					`[${AURA_BTN_ATTR}], [${COLLAGE_BTN_ATTR}], [${SWAP_BTN_ATTR}]`,
+				)
+				.forEach((el) => el.remove());
+
 			this.injectToggle(leaf);
-			this.injectAuraToggle(leaf);
 			this.injectVibeToggle(leaf);
 			this.injectChromeToggle(leaf);
 			this.injectAddTextButton(leaf);
-			this.injectCollageButton(leaf);
-			this.injectSwapButton(leaf);
 			this.imageResize.install(leaf);
 			this.imageSwap.install(leaf);
 			this.ensureTextPanel(leaf);
@@ -752,7 +760,9 @@ export default class IntuitionCanvasPlugin extends Plugin {
 
 		const suspendOpts = {
 			getSuspended: () =>
-				this.imageResize.isActive || this.imageSwap.isActive,
+				this.imageResize.isActive ||
+				this.imageSwap.isActive ||
+				this.imageCropPan.isActive,
 			getSelectionCount: () => {
 				const sel = view.canvas?.selection;
 				if (sel) return sel.size;
@@ -948,6 +958,15 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			getPresentation: () => this.settings.presentation,
 			onPresentationChange: (partial) =>
 				this.patchPresentationSettings(partial),
+			onCropPan: () => {
+				const images = this.getSelectedImageNodes(view);
+				const node = images[0];
+				if (!node) {
+					new Notice("Выдели картинку", 1400);
+					return;
+				}
+				this.imageCropPan.start(node);
+			},
 		});
 		this.imagePanels.set(id, panel);
 	}
@@ -1124,42 +1143,6 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			ariaLabel: "Текст без карточки",
 			iconName: "type",
 			onClick: () => this.addPlainTextNode(view),
-		});
-	}
-
-	private injectCollageButton(leaf: WorkspaceLeaf) {
-		const view = leaf.view as CanvasViewLike;
-		const controls =
-			view.canvas?.canvasControlsEl ??
-			view.containerEl.querySelector<HTMLElement>(".canvas-controls");
-		if (!controls) return;
-
-		injectControlButton(controls, {
-			attr: COLLAGE_BTN_ATTR,
-			sync: (button) => this.syncCollageButton(leaf, button),
-			onClick: () => this.arrangeSelectedImagesCollage(view),
-		});
-	}
-
-	private injectSwapButton(leaf: WorkspaceLeaf) {
-		const view = leaf.view as CanvasViewLike;
-		const controls =
-			view.canvas?.canvasControlsEl ??
-			view.containerEl.querySelector<HTMLElement>(".canvas-controls");
-		if (!controls) return;
-
-		injectControlButton(controls, {
-			attr: SWAP_BTN_ATTR,
-			sync: (button) => {
-				syncControlButton(button, {
-					title: "Поменять две фото местами (или Alt+drag)",
-					iconName: "arrow-left-right",
-				});
-			},
-			onClick: () => {
-				if (this.imageSwap.swapTwoSelected(view)) return;
-				new Notice("Выдели ровно 2 фотографии", 1600);
-			},
 		});
 	}
 
@@ -1421,22 +1404,6 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		});
 	}
 
-	private injectAuraToggle(leaf: WorkspaceLeaf) {
-		const view = leaf.view as CanvasViewLike;
-		const controls =
-			view.canvas?.canvasControlsEl ??
-			view.containerEl.querySelector<HTMLElement>(".canvas-controls");
-		if (!controls) return;
-
-		injectControlButton(controls, {
-			attr: AURA_BTN_ATTR,
-			buttonClass:
-				"clickable-icon intuition-canvas-toggle intuition-canvas-aura-toggle",
-			sync: (button) => this.syncAuraToggleButton(button),
-			onClick: () => void this.toggleHideAuras(),
-		});
-	}
-
 	private injectVibeToggle(leaf: WorkspaceLeaf) {
 		const view = leaf.view as CanvasViewLike;
 		const controls =
@@ -1513,9 +1480,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 		const on = this.settings.vibeMode;
 		syncControlButton(el, {
 			active: on,
-			title: on
-				? "Выключить вайб-наклон"
-				: "Вайб-режим: наклон у курсора",
+			title: "make pretty",
 			iconName: "wand-2",
 		});
 	}

@@ -698,8 +698,44 @@ body.intuition-canvas-hide-auras .intuition-sticky-audio .intuition-image-aura,
 	max-height: none !important;
 	margin: 0 !important;
 	padding: 0 !important;
-	object-fit: fill !important;
-	object-position: center center !important;
+	object-fit: var(--intuition-image-fit, fill) !important;
+	object-position: var(--intuition-image-pos-x, 50%)
+		var(--intuition-image-pos-y, 50%) !important;
+}
+
+.intuition-panel__hint {
+	font-size: 11px;
+	line-height: 1.35;
+	opacity: 0.65;
+	margin: 6px 0 2px;
+	padding: 0 2px;
+}
+
+.intuition-panel__crop-controls {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+body.intuition-crop-pan-active .canvas-node[data-intuition-fit="crop"] img,
+body.intuition-crop-pan-active
+	.canvas-node[data-intuition-fit="crop"]
+	.image-embed {
+	cursor: grab !important;
+}
+
+body.intuition-crop-pan-active.is-dragging-crop
+	.canvas-node[data-intuition-fit="crop"]
+	img,
+body.intuition-crop-pan-active.is-dragging-crop
+	.canvas-node[data-intuition-fit="crop"]
+	.image-embed {
+	cursor: grabbing !important;
+}
+
+.canvas-node.intuition-crop-pan-target {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
 }
 
 /* ── Plain text nodes (no card chrome) ─────────────────────────────── */

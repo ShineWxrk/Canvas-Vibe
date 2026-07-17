@@ -9,6 +9,9 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
 
 export type ImageBorderStyle = "solid" | "dashed" | "dotted";
 
+/** How the bitmap fills the node frame. */
+export type ImageFitMode = "stretch" | "crop";
+
 export interface IntuitionImageStyle {
 	opacity: number;
 	borderWidth: number;
@@ -16,6 +19,15 @@ export interface IntuitionImageStyle {
 	borderStyle: ImageBorderStyle;
 	/** Corner roundness in px */
 	borderRadius: number;
+	/**
+	 * stretch = object-fit fill (may distort).
+	 * crop = object-fit cover (keeps aspect, clips; pan via focalX/Y).
+	 */
+	fitMode: ImageFitMode;
+	/** object-position X in % (0–100), used in crop mode */
+	focalX: number;
+	/** object-position Y in % (0–100), used in crop mode */
+	focalY: number;
 	aura: boolean;
 	auraStrength: number;
 	/** Aura footprint as % of the node box. */
@@ -38,7 +50,10 @@ export const DEFAULT_IMAGE_STYLE: IntuitionImageStyle = {
 	borderColor: "#d6d9db",
 	borderStyle: "solid",
 	borderRadius: 12,
-		aura: true,
+	fitMode: "stretch",
+	focalX: 50,
+	focalY: 50,
+	aura: true,
 	auraStrength: 50,
 	auraSize: 100,
 	auraColor: "",
@@ -93,6 +108,9 @@ const CSS_VARS = [
 	"--intuition-image-border-color",
 	"--intuition-image-border-style",
 	"--intuition-image-border-radius",
+	"--intuition-image-fit",
+	"--intuition-image-pos-x",
+	"--intuition-image-pos-y",
 ] as const;
 
 export function isImageNode(node: ImageNodeLike): boolean {
@@ -125,6 +143,9 @@ export function readImageStyle(node: ImageNodeLike): IntuitionImageStyle {
 		borderRadius: clampBorderRadius(
 			stored.borderRadius ?? DEFAULT_IMAGE_STYLE.borderRadius,
 		),
+		fitMode: normalizeFitMode(stored.fitMode ?? DEFAULT_IMAGE_STYLE.fitMode),
+		focalX: clampFocal(stored.focalX ?? DEFAULT_IMAGE_STYLE.focalX),
+		focalY: clampFocal(stored.focalY ?? DEFAULT_IMAGE_STYLE.focalY),
 		aura: stored.aura ?? DEFAULT_IMAGE_STYLE.aura,
 		auraStrength: clampAuraStrength(
 			stored.auraStrength ?? DEFAULT_IMAGE_STYLE.auraStrength,
@@ -155,6 +176,9 @@ export function writeImageStyle(node: ImageNodeLike, style: IntuitionImageStyle)
 		borderColor: normalizeColor(style.borderColor),
 		borderStyle: normalizeBorderStyle(style.borderStyle),
 		borderRadius: clampBorderRadius(style.borderRadius),
+		fitMode: normalizeFitMode(style.fitMode),
+		focalX: clampFocal(style.focalX),
+		focalY: clampFocal(style.focalY),
 		aura: !!style.aura,
 		auraStrength: clampAuraStrength(style.auraStrength),
 		auraSize: clampAuraSize(style.auraSize),
@@ -178,6 +202,7 @@ export function clearImageStyle(node: ImageNodeLike) {
 	if (el) {
 		for (const prop of CSS_VARS) el.style.removeProperty(prop);
 		delete el.dataset.intuitionImage;
+		delete el.dataset.intuitionFit;
 		delete el.dataset.intuitionNoTilt;
 		delete el.dataset.intuitionTiltStrength;
 		delete el.dataset[PAINT_KEY_ATTR];
@@ -202,12 +227,18 @@ export function applyImageStyleToDom(
 	const borderColor = normalizeColor(s.borderColor);
 	const borderStyle = normalizeBorderStyle(s.borderStyle);
 	const borderRadius = clampBorderRadius(s.borderRadius);
+	const fitMode = normalizeFitMode(s.fitMode);
+	const focalX = clampFocal(s.focalX);
+	const focalY = clampFocal(s.focalY);
 	const paintKey = [
 		opacity.toFixed(4),
 		borderWidth,
 		borderColor,
 		borderStyle,
 		borderRadius,
+		fitMode,
+		focalX,
+		focalY,
 		s.vibeTilt === false ? 0 : 1,
 		clampVibeTiltStrength(s.vibeTiltStrength),
 		s.aura ? 1 : 0,
@@ -230,6 +261,7 @@ export function applyImageStyleToDom(
 	}
 
 	el.dataset.intuitionImage = "1";
+	el.dataset.intuitionFit = fitMode;
 	el.dataset[PAINT_KEY_ATTR] = paintKey;
 	if (s.vibeTilt === false) {
 		el.dataset.intuitionNoTilt = "1";
@@ -245,8 +277,24 @@ export function applyImageStyleToDom(
 	el.style.setProperty("--intuition-image-border-color", borderColor);
 	el.style.setProperty("--intuition-image-border-style", borderStyle);
 	el.style.setProperty("--intuition-image-border-radius", `${borderRadius}px`);
+	el.style.setProperty(
+		"--intuition-image-fit",
+		fitMode === "crop" ? "cover" : "fill",
+	);
+	el.style.setProperty("--intuition-image-pos-x", `${focalX}%`);
+	el.style.setProperty("--intuition-image-pos-y", `${focalY}%`);
 
-	paintImageStyles(el, opacity, borderWidth, borderColor, borderStyle, borderRadius);
+	paintImageStyles(
+		el,
+		opacity,
+		borderWidth,
+		borderColor,
+		borderStyle,
+		borderRadius,
+		fitMode,
+		focalX,
+		focalY,
+	);
 	void applyAura(node, s);
 
 	// Retry once if Canvas hasn't mounted media/container yet.
@@ -257,7 +305,17 @@ export function applyImageStyleToDom(
 
 	window.requestAnimationFrame(() => {
 		if (!node.nodeEl || node.nodeEl !== el) return;
-		paintImageStyles(el, opacity, borderWidth, borderColor, borderStyle, borderRadius);
+		paintImageStyles(
+			el,
+			opacity,
+			borderWidth,
+			borderColor,
+			borderStyle,
+			borderRadius,
+			fitMode,
+			focalX,
+			focalY,
+		);
 		void applyAura(node, s);
 	});
 }
@@ -377,10 +435,16 @@ function paintImageStyles(
 	borderColor: string,
 	borderStyle: ImageBorderStyle,
 	borderRadius: number,
+	fitMode: ImageFitMode,
+	focalX: number,
+	focalY: number,
 ) {
 	const opacityValue = String(opacity);
 	const fullyGone = opacity <= 0.005;
 	const radiusPx = `${clampBorderRadius(borderRadius)}px`;
+	const fit = fitMode === "crop" ? "cover" : "fill";
+	const posX = `${clampFocal(focalX)}%`;
+	const posY = `${clampFocal(focalY)}%`;
 	nodeEl.dataset.intuitionInvisible = fullyGone ? "1" : "0";
 
 	nodeEl
@@ -388,6 +452,8 @@ function paintImageStyles(
 		.forEach((el) => {
 			el.style.setProperty("opacity", opacityValue, "important");
 			el.style.setProperty("border-radius", radiusPx, "important");
+			el.style.setProperty("object-fit", fit, "important");
+			el.style.setProperty("object-position", `${posX} ${posY}`, "important");
 			el.setAttribute(PAINT_ATTR, "1");
 			if (fullyGone) {
 				el.style.setProperty("border", "none", "important");
@@ -475,6 +541,8 @@ function clearPaintedStyles(nodeEl: HTMLElement) {
 		"background",
 		"background-color",
 		"overflow",
+		"object-fit",
+		"object-position",
 	];
 	nodeEl.querySelectorAll<HTMLElement>(`[${PAINT_ATTR}]`).forEach((el) => {
 		for (const prop of chromeProps) el.style.removeProperty(prop);
@@ -514,6 +582,15 @@ function clampVibeTiltStrength(value: number): number {
 function clampAuraSize(value: number): number {
 	if (!Number.isFinite(value)) return DEFAULT_IMAGE_STYLE.auraSize;
 	return Math.min(200, Math.max(0, Math.round(value)));
+}
+
+export function clampFocal(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_IMAGE_STYLE.focalX;
+	return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+export function normalizeFitMode(mode: unknown): ImageFitMode {
+	return mode === "crop" ? "crop" : "stretch";
 }
 
 function normalizeColor(color: string): string {

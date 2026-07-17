@@ -26,7 +26,7 @@ __export(main_exports, {
   default: () => IntuitionCanvasPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // ImageStylePanel.ts
 var import_obsidian = require("obsidian");
@@ -372,6 +372,9 @@ var DEFAULT_IMAGE_STYLE = {
   borderColor: "#d6d9db",
   borderStyle: "solid",
   borderRadius: 12,
+  fitMode: "stretch",
+  focalX: 50,
+  focalY: 50,
   aura: true,
   auraStrength: 50,
   auraSize: 100,
@@ -396,7 +399,10 @@ var CSS_VARS = [
   "--intuition-image-border-width",
   "--intuition-image-border-color",
   "--intuition-image-border-style",
-  "--intuition-image-border-radius"
+  "--intuition-image-border-radius",
+  "--intuition-image-fit",
+  "--intuition-image-pos-x",
+  "--intuition-image-pos-y"
 ];
 function isImageNode(node) {
   const data = node.getData?.();
@@ -421,6 +427,9 @@ function readImageStyle(node) {
     borderRadius: clampBorderRadius(
       stored.borderRadius ?? DEFAULT_IMAGE_STYLE.borderRadius
     ),
+    fitMode: normalizeFitMode(stored.fitMode ?? DEFAULT_IMAGE_STYLE.fitMode),
+    focalX: clampFocal(stored.focalX ?? DEFAULT_IMAGE_STYLE.focalX),
+    focalY: clampFocal(stored.focalY ?? DEFAULT_IMAGE_STYLE.focalY),
     aura: stored.aura ?? DEFAULT_IMAGE_STYLE.aura,
     auraStrength: clampAuraStrength(
       stored.auraStrength ?? DEFAULT_IMAGE_STYLE.auraStrength
@@ -445,6 +454,9 @@ function writeImageStyle(node, style) {
     borderColor: normalizeColor(style.borderColor),
     borderStyle: normalizeBorderStyle(style.borderStyle),
     borderRadius: clampBorderRadius(style.borderRadius),
+    fitMode: normalizeFitMode(style.fitMode),
+    focalX: clampFocal(style.focalX),
+    focalY: clampFocal(style.focalY),
     aura: !!style.aura,
     auraStrength: clampAuraStrength(style.auraStrength),
     auraSize: clampAuraSize(style.auraSize),
@@ -466,6 +478,7 @@ function clearImageStyle(node) {
   if (el) {
     for (const prop of CSS_VARS) el.style.removeProperty(prop);
     delete el.dataset.intuitionImage;
+    delete el.dataset.intuitionFit;
     delete el.dataset.intuitionNoTilt;
     delete el.dataset.intuitionTiltStrength;
     delete el.dataset[PAINT_KEY_ATTR];
@@ -483,12 +496,18 @@ function applyImageStyleToDom(node, style) {
   const borderColor = normalizeColor(s.borderColor);
   const borderStyle = normalizeBorderStyle(s.borderStyle);
   const borderRadius = clampBorderRadius(s.borderRadius);
+  const fitMode = normalizeFitMode(s.fitMode);
+  const focalX = clampFocal(s.focalX);
+  const focalY = clampFocal(s.focalY);
   const paintKey = [
     opacity.toFixed(4),
     borderWidth,
     borderColor,
     borderStyle,
     borderRadius,
+    fitMode,
+    focalX,
+    focalY,
     s.vibeTilt === false ? 0 : 1,
     clampVibeTiltStrength(s.vibeTiltStrength),
     s.aura ? 1 : 0,
@@ -508,6 +527,7 @@ function applyImageStyleToDom(node, style) {
     return;
   }
   el.dataset.intuitionImage = "1";
+  el.dataset.intuitionFit = fitMode;
   el.dataset[PAINT_KEY_ATTR] = paintKey;
   if (s.vibeTilt === false) {
     el.dataset.intuitionNoTilt = "1";
@@ -523,13 +543,39 @@ function applyImageStyleToDom(node, style) {
   el.style.setProperty("--intuition-image-border-color", borderColor);
   el.style.setProperty("--intuition-image-border-style", borderStyle);
   el.style.setProperty("--intuition-image-border-radius", `${borderRadius}px`);
-  paintImageStyles(el, opacity, borderWidth, borderColor, borderStyle, borderRadius);
+  el.style.setProperty(
+    "--intuition-image-fit",
+    fitMode === "crop" ? "cover" : "fill"
+  );
+  el.style.setProperty("--intuition-image-pos-x", `${focalX}%`);
+  el.style.setProperty("--intuition-image-pos-y", `${focalY}%`);
+  paintImageStyles(
+    el,
+    opacity,
+    borderWidth,
+    borderColor,
+    borderStyle,
+    borderRadius,
+    fitMode,
+    focalX,
+    focalY
+  );
   void applyAura(node, s);
   const needsRetry = !el.querySelector(".canvas-node-container") || !el.querySelector("img, .media-embed, .image-embed");
   if (!needsRetry) return;
   window.requestAnimationFrame(() => {
     if (!node.nodeEl || node.nodeEl !== el) return;
-    paintImageStyles(el, opacity, borderWidth, borderColor, borderStyle, borderRadius);
+    paintImageStyles(
+      el,
+      opacity,
+      borderWidth,
+      borderColor,
+      borderStyle,
+      borderRadius,
+      fitMode,
+      focalX,
+      focalY
+    );
     void applyAura(node, s);
   });
 }
@@ -624,14 +670,19 @@ function arraysEqual(a, b) {
   if (!Array.isArray(a) || a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
 }
-function paintImageStyles(nodeEl, opacity, borderWidth, borderColor, borderStyle, borderRadius) {
+function paintImageStyles(nodeEl, opacity, borderWidth, borderColor, borderStyle, borderRadius, fitMode, focalX, focalY) {
   const opacityValue = String(opacity);
   const fullyGone = opacity <= 5e-3;
   const radiusPx = `${clampBorderRadius(borderRadius)}px`;
+  const fit = fitMode === "crop" ? "cover" : "fill";
+  const posX = `${clampFocal(focalX)}%`;
+  const posY = `${clampFocal(focalY)}%`;
   nodeEl.dataset.intuitionInvisible = fullyGone ? "1" : "0";
   nodeEl.querySelectorAll("img, .media-embed, .image-embed").forEach((el) => {
     el.style.setProperty("opacity", opacityValue, "important");
     el.style.setProperty("border-radius", radiusPx, "important");
+    el.style.setProperty("object-fit", fit, "important");
+    el.style.setProperty("object-position", `${posX} ${posY}`, "important");
     el.setAttribute(PAINT_ATTR, "1");
     if (fullyGone) {
       el.style.setProperty("border", "none", "important");
@@ -708,7 +759,9 @@ function clearPaintedStyles(nodeEl) {
     "box-sizing",
     "background",
     "background-color",
-    "overflow"
+    "overflow",
+    "object-fit",
+    "object-position"
   ];
   nodeEl.querySelectorAll(`[${PAINT_ATTR}]`).forEach((el) => {
     for (const prop of chromeProps) el.style.removeProperty(prop);
@@ -742,6 +795,13 @@ function clampVibeTiltStrength(value) {
 function clampAuraSize(value) {
   if (!Number.isFinite(value)) return DEFAULT_IMAGE_STYLE.auraSize;
   return Math.min(200, Math.max(0, Math.round(value)));
+}
+function clampFocal(value) {
+  if (!Number.isFinite(value)) return DEFAULT_IMAGE_STYLE.focalX;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+function normalizeFitMode(mode) {
+  return mode === "crop" ? "crop" : "stretch";
 }
 function normalizeColor(color) {
   if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
@@ -1047,12 +1107,6 @@ var PRESENTATION_TRANSITION_OPTIONS = [
   { value: "slide", label: "\u0421\u0434\u0432\u0438\u0433" },
   { value: "fly", label: "\u041A\u043E\u043B\u043B\u0430\u0436" }
 ];
-function toTransparency(opacity) {
-  return Math.min(100, Math.max(0, 100 - opacity));
-}
-function toOpacity(transparency) {
-  return Math.min(100, Math.max(0, 100 - transparency));
-}
 var ImageStylePanel = class {
   constructor(parent) {
     this.nodes = [];
@@ -1071,19 +1125,6 @@ var ImageStylePanel = class {
     closeBtn.addEventListener("click", () => this.hide());
     const body = this.el.createDiv({ cls: "intuition-panel__body" });
     const styleAcc = this.createAccordion(body, "\u0421\u0442\u0438\u043B\u044C", true);
-    const opacityRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
-    opacityRow.createSpan({
-      text: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C",
-      cls: "intuition-panel__label"
-    });
-    const opacityWrap = opacityRow.createDiv({ cls: "intuition-panel__size" });
-    const transparency = opacityWrap.createEl("input", {
-      type: "range",
-      attr: { min: "0", max: "100", step: "1" }
-    });
-    const transparencyValue = opacityWrap.createSpan({
-      cls: "intuition-panel__value"
-    });
     const colorRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
     colorRow.createSpan({
       text: "\u0426\u0432\u0435\u0442 \u043E\u0431\u0432\u043E\u0434\u043A\u0438",
@@ -1130,6 +1171,43 @@ var ImageStylePanel = class {
     for (const opt of BORDER_STYLE_OPTIONS) {
       borderStyle.createEl("option", { text: opt.label, value: opt.value });
     }
+    const cropAcc = this.createAccordion(body, "\u041A\u0430\u0434\u0440", true);
+    const fitRow = cropAcc.body.createDiv({ cls: "intuition-panel__row" });
+    fitRow.createSpan({ text: "\u0417\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u0438\u0435", cls: "intuition-panel__label" });
+    const fitMode = fitRow.createEl("select", {
+      cls: "dropdown intuition-panel__select"
+    });
+    fitMode.createEl("option", { text: "\u0420\u0430\u0441\u0442\u044F\u043D\u0443\u0442\u044C", value: "stretch" });
+    fitMode.createEl("option", { text: "\u041E\u0431\u0440\u0435\u0437\u043A\u0430", value: "crop" });
+    const cropControls = cropAcc.body.createDiv({
+      cls: "intuition-panel__crop-controls"
+    });
+    const focalXRow = cropControls.createDiv({ cls: "intuition-panel__row" });
+    focalXRow.createSpan({ text: "\u0421\u0434\u0432\u0438\u0433 X", cls: "intuition-panel__label" });
+    const focalXWrap = focalXRow.createDiv({ cls: "intuition-panel__size" });
+    const focalX = focalXWrap.createEl("input", {
+      type: "range",
+      attr: { min: "0", max: "100", step: "1" }
+    });
+    const focalXValue = focalXWrap.createSpan({ cls: "intuition-panel__value" });
+    const focalYRow = cropControls.createDiv({ cls: "intuition-panel__row" });
+    focalYRow.createSpan({ text: "\u0421\u0434\u0432\u0438\u0433 Y", cls: "intuition-panel__label" });
+    const focalYWrap = focalYRow.createDiv({ cls: "intuition-panel__size" });
+    const focalY = focalYWrap.createEl("input", {
+      type: "range",
+      attr: { min: "0", max: "100", step: "1" }
+    });
+    const focalYValue = focalYWrap.createSpan({ cls: "intuition-panel__value" });
+    const cropPanRow = cropControls.createDiv({
+      cls: "intuition-panel__row intuition-panel__row--full"
+    });
+    const cropPanBtn = cropPanRow.createEl("button", {
+      cls: "mod-cta intuition-panel__action",
+      text: "\u0421\u0434\u0432\u0438\u0433 \u043A\u0430\u0434\u0440\u0430 \u043C\u044B\u0448\u044C\u044E",
+      attr: {
+        title: "\u0422\u044F\u043D\u0438 \u0444\u043E\u0442\u043E \u0432\u043D\u0443\u0442\u0440\u0438 \u0440\u0430\u043C\u043A\u0438. \u041A\u0440\u0430\u044F \u0440\u0430\u043C\u043A\u0438 \u043F\u043E-\u043F\u0440\u0435\u0436\u043D\u0435\u043C\u0443 \u043C\u0435\u043D\u044F\u044E\u0442 \u043E\u0431\u0440\u0435\u0437\u043A\u0443 \u0431\u0435\u0437 \u0438\u0441\u043A\u0430\u0436\u0435\u043D\u0438\u044F."
+      }
+    });
     const auraAcc = this.createAccordion(body, "\u0410\u0443\u0440\u0430", false);
     const auraRow = auraAcc.body.createDiv({ cls: "intuition-panel__row" });
     auraRow.createSpan({ text: "\u0410\u0443\u0440\u0430", cls: "intuition-panel__label" });
@@ -1214,14 +1292,19 @@ var ImageStylePanel = class {
       cls: "intuition-panel__value"
     });
     this.inputs = {
-      transparency,
-      transparencyValue,
       borderColor,
       borderWidth,
       borderWidthValue,
       borderRadius,
       borderRadiusValue,
       borderStyle,
+      fitMode,
+      focalX,
+      focalXValue,
+      focalY,
+      focalYValue,
+      cropPanBtn,
+      cropControls,
       aura,
       auraShimmer,
       auraStrength,
@@ -1233,11 +1316,6 @@ var ImageStylePanel = class {
       vibeTiltStrength,
       vibeTiltStrengthValue
     };
-    transparency.addEventListener("input", () => {
-      const value = Number(transparency.value);
-      transparencyValue.setText(`${value}%`);
-      this.commit({ opacity: toOpacity(value) });
-    });
     borderColor.addEventListener(
       "input",
       () => this.commit({ borderColor: borderColor.value })
@@ -1258,6 +1336,31 @@ var ImageStylePanel = class {
         borderStyle: borderStyle.value
       })
     );
+    fitMode.addEventListener("change", () => {
+      const mode = fitMode.value === "crop" ? "crop" : "stretch";
+      this.commit({
+        fitMode: mode,
+        ...mode === "crop" ? {} : {}
+      });
+      this.syncCropControlsVisibility();
+    });
+    focalX.addEventListener("input", () => {
+      const value = Number(focalX.value);
+      focalXValue.setText(`${value}%`);
+      this.commit({ focalX: value });
+    });
+    focalY.addEventListener("input", () => {
+      const value = Number(focalY.value);
+      focalYValue.setText(`${value}%`);
+      this.commit({ focalY: value });
+    });
+    cropPanBtn.addEventListener("click", () => {
+      if (this.style.fitMode !== "crop") {
+        this.commit({ fitMode: "crop" });
+        this.syncCropControlsVisibility();
+      }
+      this.collageHooks?.onCropPan?.();
+    });
     aura.addEventListener("change", () => {
       const next = { aura: aura.checked };
       if (aura.checked) {
@@ -1415,14 +1518,11 @@ var ImageStylePanel = class {
       text: "\u0412 \u0441\u0435\u0442\u043A\u0443"
     });
     arrangeBtn.addEventListener("click", () => this.collageHooks?.onArrange());
-    this.presentSection = body.createDiv({ cls: "intuition-panel__present" });
     const presentL = PRESENTATION_LIMITS;
-    const presentTimingAcc = this.createAccordion(
-      this.presentSection,
-      "\u0422\u0430\u0439\u043C\u0438\u043D\u0433",
-      true
-    );
-    const intervalRow = presentTimingAcc.body.createDiv({
+    const presentAcc = this.createAccordion(body, "\u041F\u043E\u043A\u0430\u0437", false);
+    this.presentSection = presentAcc.section;
+    this.presentSection.hide();
+    const intervalRow = presentAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     intervalRow.createSpan({ text: "\u0418\u043D\u0442\u0435\u0440\u0432\u0430\u043B", cls: "intuition-panel__label" });
@@ -1439,7 +1539,7 @@ var ImageStylePanel = class {
     const presentIntervalValue = intervalWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const fadeRow = presentTimingAcc.body.createDiv({
+    const fadeRow = presentAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     fadeRow.createSpan({ text: "\u041F\u043B\u0430\u0432\u043D\u043E\u0441\u0442\u044C", cls: "intuition-panel__label" });
@@ -1456,7 +1556,7 @@ var ImageStylePanel = class {
     const presentFadeValue = fadeWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const presentShuffleRow = presentTimingAcc.body.createDiv({
+    const presentShuffleRow = presentAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     presentShuffleRow.createSpan({
@@ -1471,12 +1571,7 @@ var ImageStylePanel = class {
       attr: { "aria-label": "\u0421\u043B\u0443\u0447\u0430\u0439\u043D\u044B\u0439 \u043F\u043E\u0440\u044F\u0434\u043E\u043A \u0441\u043B\u0430\u0439\u0434\u043E\u0432" }
     });
     presentShuffleLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
-    const presentTransitionsAcc = this.createAccordion(
-      this.presentSection,
-      "\u041F\u0435\u0440\u0435\u0445\u043E\u0434\u044B",
-      false
-    );
-    const kbRow = presentTransitionsAcc.body.createDiv({
+    const kbRow = presentAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     kbRow.createSpan({ text: "\u041A\u0435\u043D \u0411\u0451\u0440\u043D\u0441", cls: "intuition-panel__label" });
@@ -1493,7 +1588,7 @@ var ImageStylePanel = class {
     const presentKenBurnsValue = kbWrap.createSpan({
       cls: "intuition-panel__value"
     });
-    const transitionRow = presentTransitionsAcc.body.createDiv({
+    const transitionRow = presentAcc.body.createDiv({
       cls: "intuition-panel__row"
     });
     transitionRow.createSpan({ text: "\u041F\u0435\u0440\u0435\u0445\u043E\u0434", cls: "intuition-panel__label" });
@@ -1507,13 +1602,8 @@ var ImageStylePanel = class {
         value: opt.value
       });
     }
-    const presentEffectsAcc = this.createAccordion(
-      this.presentSection,
-      "\u042D\u0444\u0444\u0435\u043A\u0442\u044B",
-      false
-    );
     const makePresentToggleRow = (label, aria) => {
-      const row = presentEffectsAcc.body.createDiv({
+      const row = presentAcc.body.createDiv({
         cls: "intuition-panel__row"
       });
       row.createSpan({ text: label, cls: "intuition-panel__label" });
@@ -1527,10 +1617,10 @@ var ImageStylePanel = class {
       toggleLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
       return input;
     };
-    const presentAuras = makePresentToggleRow("\u0410\u0443\u0440\u044B", "\u0410\u0443\u0440\u044B \u0432 \u0441\u043B\u0430\u0439\u0434\u0448\u043E\u0443");
+    const presentAuras = makePresentToggleRow("\u0410\u0443\u0440\u044B", "\u0410\u0443\u0440\u044B \u0432 \u043F\u043E\u043A\u0430\u0437\u0435");
     const presentSparkles = makePresentToggleRow(
       "\u0411\u043B\u0435\u0441\u0442\u043A\u0438",
-      "\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0432 \u0441\u043B\u0430\u0439\u0434\u0448\u043E\u0443"
+      "\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0432 \u043F\u043E\u043A\u0430\u0437\u0435"
     );
     const presentPaletteBg = makePresentToggleRow(
       "\u0424\u043E\u043D-\u043F\u0430\u043B\u0438\u0442\u0440\u0430",
@@ -1608,9 +1698,12 @@ var ImageStylePanel = class {
       "change",
       () => this.commitPresentation({ letterbox: presentLetterbox.checked })
     );
-    this.presentBtn = this.presentSection.createEl("button", {
+    const presentBtnRow = presentAcc.body.createDiv({
+      cls: "intuition-panel__row intuition-panel__row--full"
+    });
+    this.presentBtn = presentBtnRow.createEl("button", {
       cls: "mod-cta intuition-panel__reset",
-      text: "\u0421\u043B\u0430\u0439\u0434\u0448\u043E\u0443",
+      text: "\u041F\u043E\u043A\u0430\u0437",
       attr: {
         title: "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u044B\u0435 \u0444\u043E\u0442\u043E \u043F\u043E \u043E\u0447\u0435\u0440\u0435\u0434\u0438 (\u0430\u0443\u0434\u0438\u043E \u0438 \u043F\u0440\u043E\u0447\u0435\u0435 \u0432 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0438 \u0438\u0433\u043D\u043E\u0440\u0438\u0440\u0443\u044E\u0442\u0441\u044F)"
       }
@@ -1619,7 +1712,6 @@ var ImageStylePanel = class {
       "click",
       () => this.collageHooks?.onPresent()
     );
-    this.presentSection.hide();
     const actions = body.createDiv({
       cls: "intuition-panel__row intuition-panel__row--full intuition-panel__actions"
     });
@@ -1842,15 +1934,18 @@ var ImageStylePanel = class {
     this.syncPresentSettings();
   }
   syncInputs() {
-    const transparency = toTransparency(this.style.opacity);
-    this.inputs.transparency.value = String(transparency);
-    this.inputs.transparencyValue.setText(`${transparency}%`);
     this.inputs.borderColor.value = this.style.borderColor;
     this.inputs.borderWidth.value = String(this.style.borderWidth);
     this.inputs.borderWidthValue.setText(`${this.style.borderWidth}px`);
     this.inputs.borderRadius.value = String(this.style.borderRadius);
     this.inputs.borderRadiusValue.setText(`${this.style.borderRadius}px`);
     this.inputs.borderStyle.value = this.style.borderStyle;
+    this.inputs.fitMode.value = this.style.fitMode === "crop" ? "crop" : "stretch";
+    this.inputs.focalX.value = String(this.style.focalX);
+    this.inputs.focalXValue.setText(`${this.style.focalX}%`);
+    this.inputs.focalY.value = String(this.style.focalY);
+    this.inputs.focalYValue.setText(`${this.style.focalY}%`);
+    this.syncCropControlsVisibility();
     this.inputs.aura.checked = this.style.aura;
     this.inputs.auraShimmer.checked = this.style.auraShimmer;
     this.inputs.auraStrength.value = String(this.style.auraStrength);
@@ -1868,6 +1963,14 @@ var ImageStylePanel = class {
     this.inputs.auraStrength.disabled = !this.style.aura;
     this.inputs.auraSize.disabled = !this.style.aura;
     this.inputs.auraColor.disabled = !this.style.aura;
+  }
+  syncCropControlsVisibility() {
+    const crop = this.style.fitMode === "crop";
+    if (crop) this.inputs.cropControls.show();
+    else this.inputs.cropControls.hide();
+    this.inputs.focalX.disabled = !crop;
+    this.inputs.focalY.disabled = !crop;
+    this.inputs.cropPanBtn.disabled = !this.nodes.length;
   }
   /** Apply changed fields to every selected image (keeps per-image aura colors unless overridden). */
   commit(partial) {
@@ -7062,6 +7165,142 @@ function findImageAtPoint(view, clientX, clientY, excludeId) {
   return best;
 }
 
+// imageCrop.ts
+var import_obsidian7 = require("obsidian");
+var BODY_ACTIVE = "intuition-crop-pan-active";
+var BODY_DRAG = "is-dragging-crop";
+var TARGET_CLS = "intuition-crop-pan-target";
+var ImageCropPanController = class {
+  constructor() {
+    this.active = false;
+    this.node = null;
+    this.notice = null;
+    this.dragging = false;
+    this.startX = 0;
+    this.startY = 0;
+    this.startFocalX = 50;
+    this.startFocalY = 50;
+    this.frameW = 1;
+    this.frameH = 1;
+    this.onKeyDown = null;
+    this.cleanupListeners = null;
+  }
+  get isActive() {
+    return this.active;
+  }
+  /** Enter pan mode for one cropped image. Esc or call stop() to exit. */
+  start(node) {
+    const style = readImageStyle(node);
+    if (style.fitMode !== "crop") {
+      new import_obsidian7.Notice("\u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u0432\u043A\u043B\u044E\u0447\u0438 \u0440\u0435\u0436\u0438\u043C \xAB\u041E\u0431\u0440\u0435\u0437\u043A\u0430\xBB", 1600);
+      return;
+    }
+    if (!node.nodeEl) {
+      new import_obsidian7.Notice("\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0430 \u0435\u0449\u0451 \u043D\u0435 \u0433\u043E\u0442\u043E\u0432\u0430", 1200);
+      return;
+    }
+    this.stop();
+    this.active = true;
+    this.node = node;
+    node.nodeEl.classList.add(TARGET_CLS);
+    document.body.classList.add(BODY_ACTIVE);
+    this.notice = new import_obsidian7.Notice(
+      "\u0421\u0434\u0432\u0438\u0433 \u043A\u0430\u0434\u0440\u0430: \u0442\u044F\u043D\u0438 \u0444\u043E\u0442\u043E \xB7 \u043A\u043B\u0438\u043A \u043F\u043E \u043F\u0443\u0441\u0442\u043E\u043C\u0443 / Esc \u2014 \u0433\u043E\u0442\u043E\u0432\u043E",
+      0
+    );
+    this.onKeyDown = (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        this.stop();
+      }
+    };
+    window.addEventListener("keydown", this.onKeyDown, true);
+    const onBlankClick = (ev) => {
+      if (!this.active || !this.node?.nodeEl) return;
+      if (ev.button !== 0) return;
+      const target = ev.target;
+      if (!target) return;
+      if (this.node.nodeEl.contains(target)) return;
+      if (target.closest(
+        "[data-intuition-image-panel], .intuition-image-panel, .intuition-vibe-panel, .modal-container, .notice, .menu"
+      )) {
+        return;
+      }
+      this.stop();
+    };
+    window.addEventListener("pointerdown", onBlankClick, false);
+    const onDown = (ev) => {
+      if (!this.active || !this.node?.nodeEl) return;
+      if (ev.button !== 0) return;
+      const el2 = this.node.nodeEl;
+      if (!el2.contains(ev.target)) return;
+      const cursor = window.getComputedStyle(ev.target).cursor;
+      if (cursor.includes("resize")) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.dragging = true;
+      document.body.classList.add(BODY_DRAG);
+      this.startX = ev.clientX;
+      this.startY = ev.clientY;
+      const live = readImageStyle(this.node);
+      this.startFocalX = live.focalX;
+      this.startFocalY = live.focalY;
+      const r = el2.getBoundingClientRect();
+      this.frameW = Math.max(1, r.width);
+      this.frameH = Math.max(1, r.height);
+      try {
+        ev.target.setPointerCapture?.(ev.pointerId);
+      } catch {
+      }
+    };
+    const onMove = (ev) => {
+      if (!this.dragging || !this.node) return;
+      const dx = ev.clientX - this.startX;
+      const dy = ev.clientY - this.startY;
+      const nextX = clampFocal(this.startFocalX - dx / this.frameW * 100);
+      const nextY = clampFocal(this.startFocalY - dy / this.frameH * 100);
+      const base = readImageStyle(this.node);
+      writeImageStyle(this.node, { ...base, focalX: nextX, focalY: nextY });
+    };
+    const onUp = (ev) => {
+      if (!this.dragging) return;
+      this.dragging = false;
+      document.body.classList.remove(BODY_DRAG);
+      try {
+        ev.target.releasePointerCapture?.(ev.pointerId);
+      } catch {
+      }
+    };
+    const el = node.nodeEl;
+    el.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    this.cleanupListeners = () => {
+      el.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("pointerdown", onBlankClick, false);
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+    };
+  }
+  stop() {
+    this.cleanupListeners?.();
+    this.cleanupListeners = null;
+    if (this.onKeyDown) {
+      window.removeEventListener("keydown", this.onKeyDown, true);
+      this.onKeyDown = null;
+    }
+    this.node?.nodeEl?.classList.remove(TARGET_CLS);
+    document.body.classList.remove(BODY_ACTIVE, BODY_DRAG);
+    this.notice?.hide();
+    this.notice = null;
+    this.active = false;
+    this.dragging = false;
+    this.node = null;
+  }
+};
+
 // main.ts
 var CANVAS_VIEW_TYPE = "canvas";
 var BUTTON_ATTR = "data-intuition-canvas-labels-toggle";
@@ -7074,7 +7313,7 @@ var SWAP_BTN_ATTR = "data-intuition-canvas-swap";
 var HIDE_CLASS = "intuition-canvas-hide-image-labels";
 var HIDE_AURAS_CLASS = "intuition-canvas-hide-auras";
 var TEXT_HOOK_ATTR = "data-intuition-canvas-text-hook";
-var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
+var IntuitionCanvasPlugin = class extends import_obsidian8.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -7106,6 +7345,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       registerDomEvent: this.registerDomEvent.bind(this),
       isResizeActive: () => this.imageResize.isActive
     });
+    this.imageCropPan = new ImageCropPanController();
   }
   async onload() {
     await this.loadSettings();
@@ -7147,7 +7387,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     });
     this.addCommand({
       id: "toggle-vibe-mode",
-      name: "Toggle Canvas vibe tilt mode",
+      name: "Toggle make pretty",
       checkCallback: (checking) => {
         const canvasOpen = this.app.workspace.getLeavesOfType(CANVAS_VIEW_TYPE).length > 0;
         if (checking) return canvasOpen;
@@ -7223,6 +7463,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     });
   }
   onunload() {
+    this.imageCropPan.stop();
     this.zoomFx.destroy();
     for (const panel of this.textPanels.values()) panel.el.remove();
     this.textPanels.clear();
@@ -7449,7 +7690,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     }
     this.syncVibeSparkleControls();
     this.queueVibeSettingsSave();
-    new import_obsidian7.Notice("\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
+    new import_obsidian8.Notice("\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
   }
   patchGlobalAura(partial, persist = true) {
     this.settings.globalAura = normalizeGlobalAura({
@@ -7468,7 +7709,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     this.syncGlobalAuraControls();
     this.applyGlobalAuraToAllImages(false);
     this.queueVibeSettingsSave();
-    new import_obsidian7.Notice("\u0410\u0443\u0440\u044B \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
+    new import_obsidian8.Notice("\u0410\u0443\u0440\u044B \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
   }
   /** Clear the global CSS hide so painted DOM auras can actually show. */
   clearHideAurasGate() {
@@ -7503,7 +7744,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     }
     this.refreshImageStyles();
     if (showNotice) {
-      new import_obsidian7.Notice(
+      new import_obsidian8.Notice(
         count > 0 ? `\u0410\u0443\u0440\u044B \u043F\u0440\u0438\u043C\u0435\u043D\u0435\u043D\u044B (${count})` : "\u041D\u0435\u0442 \u043A\u0430\u0440\u0442\u0438\u043D\u043E\u043A \u043D\u0430 \u043A\u0430\u043D\u0432\u0430\u0441\u0435",
         1400
       );
@@ -7513,23 +7754,23 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     this.vibeSettingsSave.schedule();
   }
   async toggleVibeMode() {
-    this.settings.vibeMode = !this.settings.vibeMode;
+    const on = !this.settings.vibeMode;
+    this.settings.vibeMode = on;
+    this.settings.hideAuras = !on;
     await this.saveSettings();
     this.applyVibeMode();
-    new import_obsidian7.Notice(
-      this.settings.vibeMode ? "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D",
-      1400
-    );
+    this.applyAuraVisibility();
+    new import_obsidian8.Notice(on ? "make pretty" : "make pretty off", 1200);
   }
   enhanceAllCanvases() {
     for (const leaf of this.app.workspace.getLeavesOfType(CANVAS_VIEW_TYPE)) {
+      leaf.view.containerEl.querySelectorAll(
+        `[${AURA_BTN_ATTR}], [${COLLAGE_BTN_ATTR}], [${SWAP_BTN_ATTR}]`
+      ).forEach((el) => el.remove());
       this.injectToggle(leaf);
-      this.injectAuraToggle(leaf);
       this.injectVibeToggle(leaf);
       this.injectChromeToggle(leaf);
       this.injectAddTextButton(leaf);
-      this.injectCollageButton(leaf);
-      this.injectSwapButton(leaf);
       this.imageResize.install(leaf);
       this.imageSwap.install(leaf);
       this.ensureTextPanel(leaf);
@@ -7587,7 +7828,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     const view = leaf.view;
     const root = canvasRoot(view);
     const suspendOpts = {
-      getSuspended: () => this.imageResize.isActive || this.imageSwap.isActive,
+      getSuspended: () => this.imageResize.isActive || this.imageSwap.isActive || this.imageCropPan.isActive,
       getSelectionCount: () => {
         const sel = view.canvas?.selection;
         if (sel) return sel.size;
@@ -7751,7 +7992,16 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       onArrange: () => this.arrangeSelectedImagesCollage(view),
       onPresent: () => this.startPhotoPresentation(leaf),
       getPresentation: () => this.settings.presentation,
-      onPresentationChange: (partial) => this.patchPresentationSettings(partial)
+      onPresentationChange: (partial) => this.patchPresentationSettings(partial),
+      onCropPan: () => {
+        const images = this.getSelectedImageNodes(view);
+        const node = images[0];
+        if (!node) {
+          new import_obsidian8.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1400);
+          return;
+        }
+        this.imageCropPan.start(node);
+      }
     });
     this.imagePanels.set(id, panel);
   }
@@ -7882,34 +8132,6 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       onClick: () => this.addPlainTextNode(view)
     });
   }
-  injectCollageButton(leaf) {
-    const view = leaf.view;
-    const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
-    if (!controls) return;
-    injectControlButton(controls, {
-      attr: COLLAGE_BTN_ATTR,
-      sync: (button) => this.syncCollageButton(leaf, button),
-      onClick: () => this.arrangeSelectedImagesCollage(view)
-    });
-  }
-  injectSwapButton(leaf) {
-    const view = leaf.view;
-    const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
-    if (!controls) return;
-    injectControlButton(controls, {
-      attr: SWAP_BTN_ATTR,
-      sync: (button) => {
-        syncControlButton(button, {
-          title: "\u041F\u043E\u043C\u0435\u043D\u044F\u0442\u044C \u0434\u0432\u0435 \u0444\u043E\u0442\u043E \u043C\u0435\u0441\u0442\u0430\u043C\u0438 (\u0438\u043B\u0438 Alt+drag)",
-          iconName: "arrow-left-right"
-        });
-      },
-      onClick: () => {
-        if (this.imageSwap.swapTwoSelected(view)) return;
-        new import_obsidian7.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0440\u043E\u0432\u043D\u043E 2 \u0444\u043E\u0442\u043E\u0433\u0440\u0430\u0444\u0438\u0438", 1600);
-      }
-    });
-  }
   syncCollageButton(_leaf, button) {
     if (!button) return;
     const gap = clampCollageGap(this.settings.collageGap);
@@ -7952,7 +8174,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     const view = leaf.view;
     const selected = this.getSelectedImageNodes(view);
     if (selected.length < 1) {
-      new import_obsidian7.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B \u043E\u0434\u043D\u0443 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1600);
+      new import_obsidian8.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B \u043E\u0434\u043D\u0443 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1600);
       return;
     }
     const ordered = sortNodesReadingOrder(
@@ -7976,7 +8198,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       });
     }
     if (slides.length === 0) {
-      new import_obsidian7.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
+      new import_obsidian8.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
       return;
     }
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
@@ -7993,10 +8215,10 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       )
     });
     if (!ok) {
-      new import_obsidian7.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u043F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044E", 1600);
+      new import_obsidian8.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u043F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044E", 1600);
       return;
     }
-    new import_obsidian7.Notice(`\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F: ${slides.length} \u0444\u043E\u0442\u043E \xB7 Esc \u2014 \u0432\u044B\u0445\u043E\u0434`, 2200);
+    new import_obsidian8.Notice(`\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F: ${slides.length} \u0444\u043E\u0442\u043E \xB7 Esc \u2014 \u0432\u044B\u0445\u043E\u0434`, 2200);
   }
   resolveImageSlideSrc(node) {
     const img = node.nodeEl?.querySelector("img");
@@ -8005,7 +8227,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     const path = node.file?.path ?? node.filePath ?? (typeof node.getData?.()?.file === "string" ? node.getData()?.file : void 0);
     if (!path) return fromDom || null;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian7.TFile) {
+    if (file instanceof import_obsidian8.TFile) {
       return this.app.vault.getResourcePath(file);
     }
     return fromDom || null;
@@ -8014,7 +8236,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
   arrangeSelectedImagesCollage(view) {
     const selected = this.getSelectedImageNodes(view);
     if (selected.length < 2) {
-      new import_obsidian7.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B 2 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438", 1600);
+      new import_obsidian8.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B 2 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438", 1600);
       return;
     }
     const gap = clampCollageGap(this.settings.collageGap);
@@ -8064,7 +8286,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     }
     commitNodeRects(updates, view.canvas);
     const axisNote = axis === "rows" ? ` \xB7 ${count} \u0441\u0442\u0440.` : ` \xB7 ${count} \u0441\u0442\u043B\u0431.`;
-    new import_obsidian7.Notice(
+    new import_obsidian8.Notice(
       `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u043E\u0442\u0441\u0442\u0443\u043F\u044B ${gap}px${axisNote}`,
       1400
     );
@@ -8072,7 +8294,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
   addPlainTextNode(view) {
     const canvas = view.canvas;
     if (!canvas?.createTextNode) {
-      new import_obsidian7.Notice("Canvas API: createTextNode \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D");
+      new import_obsidian8.Notice("Canvas API: createTextNode \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D");
       return;
     }
     const center = canvas.posCenter?.() ?? { x: 0, y: 0 };
@@ -8085,7 +8307,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       focus: true
     });
     if (!node) {
-      new import_obsidian7.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442");
+      new import_obsidian8.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442");
       return;
     }
     writeTextStyle(node, { ...DEFAULT_TEXT_STYLE });
@@ -8095,7 +8317,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     if (leaf) {
       window.setTimeout(() => this.syncStylePanelsForLeaf(leaf), 50);
     }
-    new import_obsidian7.Notice("\u0422\u0435\u043A\u0441\u0442 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D", 1500);
+    new import_obsidian8.Notice("\u0422\u0435\u043A\u0441\u0442 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D", 1500);
   }
   injectToggle(leaf) {
     const view = leaf.view;
@@ -8105,17 +8327,6 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       attr: BUTTON_ATTR,
       sync: (button) => this.syncToggleButton(button),
       onClick: () => void this.toggleHideImageLabels()
-    });
-  }
-  injectAuraToggle(leaf) {
-    const view = leaf.view;
-    const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
-    if (!controls) return;
-    injectControlButton(controls, {
-      attr: AURA_BTN_ATTR,
-      buttonClass: "clickable-icon intuition-canvas-toggle intuition-canvas-aura-toggle",
-      sync: (button) => this.syncAuraToggleButton(button),
-      onClick: () => void this.toggleHideAuras()
     });
   }
   injectVibeToggle(leaf) {
@@ -8178,7 +8389,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
     const on = this.settings.vibeMode;
     syncControlButton(el, {
       active: on,
-      title: on ? "\u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0432\u0430\u0439\u0431-\u043D\u0430\u043A\u043B\u043E\u043D" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u0443 \u043A\u0443\u0440\u0441\u043E\u0440\u0430",
+      title: "make pretty",
       iconName: "wand-2"
     });
   }

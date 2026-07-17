@@ -44,15 +44,6 @@ const PRESENTATION_TRANSITION_OPTIONS: {
 	{ value: "fly", label: "Коллаж" },
 ];
 
-/** UI shows transparency % (0 = opaque, 100 = invisible). Stored style uses opacity. */
-function toTransparency(opacity: number): number {
-	return Math.min(100, Math.max(0, 100 - opacity));
-}
-
-function toOpacity(transparency: number): number {
-	return Math.min(100, Math.max(0, 100 - transparency));
-}
-
 export type ImageStylePanelCollageHooks = {
 	getGap: () => number;
 	onGapChange: (gap: number) => void;
@@ -67,6 +58,8 @@ export type ImageStylePanelCollageHooks = {
 	getPresentation: () => PresentationSettings;
 	/** Patch + persist slideshow preferences. */
 	onPresentationChange: (partial: Partial<PresentationSettings>) => void;
+	/** Enter drag-to-pan mode for the primary selected crop image. */
+	onCropPan?: () => void;
 };
 
 export class ImageStylePanel {
@@ -101,14 +94,19 @@ export class ImageStylePanel {
 		letterbox: HTMLInputElement;
 	};
 	private inputs: {
-		transparency: HTMLInputElement;
-		transparencyValue: HTMLElement;
 		borderColor: HTMLInputElement;
 		borderWidth: HTMLInputElement;
 		borderWidthValue: HTMLElement;
 		borderRadius: HTMLInputElement;
 		borderRadiusValue: HTMLElement;
 		borderStyle: HTMLSelectElement;
+		fitMode: HTMLSelectElement;
+		focalX: HTMLInputElement;
+		focalXValue: HTMLElement;
+		focalY: HTMLInputElement;
+		focalYValue: HTMLElement;
+		cropPanBtn: HTMLButtonElement;
+		cropControls: HTMLElement;
 		aura: HTMLInputElement;
 		auraShimmer: HTMLInputElement;
 		auraStrength: HTMLInputElement;
@@ -139,20 +137,6 @@ export class ImageStylePanel {
 
 		// ── Стиль ──
 		const styleAcc = this.createAccordion(body, "Стиль", true);
-
-		const opacityRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
-		opacityRow.createSpan({
-			text: "Прозрачность",
-			cls: "intuition-panel__label",
-		});
-		const opacityWrap = opacityRow.createDiv({ cls: "intuition-panel__size" });
-		const transparency = opacityWrap.createEl("input", {
-			type: "range",
-			attr: { min: "0", max: "100", step: "1" },
-		});
-		const transparencyValue = opacityWrap.createSpan({
-			cls: "intuition-panel__value",
-		});
 
 		const colorRow = styleAcc.body.createDiv({ cls: "intuition-panel__row" });
 		colorRow.createSpan({
@@ -203,6 +187,49 @@ export class ImageStylePanel {
 		for (const opt of BORDER_STYLE_OPTIONS) {
 			borderStyle.createEl("option", { text: opt.label, value: opt.value });
 		}
+
+		// ── Кадр / обрезка ──
+		const cropAcc = this.createAccordion(body, "Кадр", true);
+		const fitRow = cropAcc.body.createDiv({ cls: "intuition-panel__row" });
+		fitRow.createSpan({ text: "Заполнение", cls: "intuition-panel__label" });
+		const fitMode = fitRow.createEl("select", {
+			cls: "dropdown intuition-panel__select",
+		});
+		fitMode.createEl("option", { text: "Растянуть", value: "stretch" });
+		fitMode.createEl("option", { text: "Обрезка", value: "crop" });
+
+		const cropControls = cropAcc.body.createDiv({
+			cls: "intuition-panel__crop-controls",
+		});
+		const focalXRow = cropControls.createDiv({ cls: "intuition-panel__row" });
+		focalXRow.createSpan({ text: "Сдвиг X", cls: "intuition-panel__label" });
+		const focalXWrap = focalXRow.createDiv({ cls: "intuition-panel__size" });
+		const focalX = focalXWrap.createEl("input", {
+			type: "range",
+			attr: { min: "0", max: "100", step: "1" },
+		});
+		const focalXValue = focalXWrap.createSpan({ cls: "intuition-panel__value" });
+
+		const focalYRow = cropControls.createDiv({ cls: "intuition-panel__row" });
+		focalYRow.createSpan({ text: "Сдвиг Y", cls: "intuition-panel__label" });
+		const focalYWrap = focalYRow.createDiv({ cls: "intuition-panel__size" });
+		const focalY = focalYWrap.createEl("input", {
+			type: "range",
+			attr: { min: "0", max: "100", step: "1" },
+		});
+		const focalYValue = focalYWrap.createSpan({ cls: "intuition-panel__value" });
+
+		const cropPanRow = cropControls.createDiv({
+			cls: "intuition-panel__row intuition-panel__row--full",
+		});
+		const cropPanBtn = cropPanRow.createEl("button", {
+			cls: "mod-cta intuition-panel__action",
+			text: "Сдвиг кадра мышью",
+			attr: {
+				title:
+					"Тяни фото внутри рамки. Края рамки по-прежнему меняют обрезку без искажения.",
+			},
+		});
 
 		// ── Аура ──
 		const auraAcc = this.createAccordion(body, "Аура", false);
@@ -299,14 +326,19 @@ export class ImageStylePanel {
 		});
 
 		this.inputs = {
-			transparency,
-			transparencyValue,
 			borderColor,
 			borderWidth,
 			borderWidthValue,
 			borderRadius,
 			borderRadiusValue,
 			borderStyle,
+			fitMode,
+			focalX,
+			focalXValue,
+			focalY,
+			focalYValue,
+			cropPanBtn,
+			cropControls,
 			aura,
 			auraShimmer,
 			auraStrength,
@@ -319,11 +351,6 @@ export class ImageStylePanel {
 			vibeTiltStrengthValue,
 		};
 
-		transparency.addEventListener("input", () => {
-			const value = Number(transparency.value);
-			transparencyValue.setText(`${value}%`);
-			this.commit({ opacity: toOpacity(value) });
-		});
 		borderColor.addEventListener("input", () =>
 			this.commit({ borderColor: borderColor.value }),
 		);
@@ -342,6 +369,31 @@ export class ImageStylePanel {
 				borderStyle: borderStyle.value as ImageBorderStyle,
 			}),
 		);
+		fitMode.addEventListener("change", () => {
+			const mode = fitMode.value === "crop" ? "crop" : "stretch";
+			this.commit({
+				fitMode: mode,
+				...(mode === "crop" ? {} : {}),
+			});
+			this.syncCropControlsVisibility();
+		});
+		focalX.addEventListener("input", () => {
+			const value = Number(focalX.value);
+			focalXValue.setText(`${value}%`);
+			this.commit({ focalX: value });
+		});
+		focalY.addEventListener("input", () => {
+			const value = Number(focalY.value);
+			focalYValue.setText(`${value}%`);
+			this.commit({ focalY: value });
+		});
+		cropPanBtn.addEventListener("click", () => {
+			if (this.style.fitMode !== "crop") {
+				this.commit({ fitMode: "crop" });
+				this.syncCropControlsVisibility();
+			}
+			this.collageHooks?.onCropPan?.();
+		});
 		aura.addEventListener("change", () => {
 			const next: Partial<IntuitionImageStyle> = { aura: aura.checked };
 			if (aura.checked) {
@@ -501,18 +553,12 @@ export class ImageStylePanel {
 		});
 		arrangeBtn.addEventListener("click", () => this.collageHooks?.onArrange());
 
-		this.presentSection = body.createDiv({ cls: "intuition-panel__present" });
-
 		const presentL = PRESENTATION_LIMITS;
+		const presentAcc = this.createAccordion(body, "Показ", false);
+		this.presentSection = presentAcc.section;
+		this.presentSection.hide();
 
-		// ── Тайминг ──
-		const presentTimingAcc = this.createAccordion(
-			this.presentSection,
-			"Тайминг",
-			true,
-		);
-
-		const intervalRow = presentTimingAcc.body.createDiv({
+		const intervalRow = presentAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		intervalRow.createSpan({ text: "Интервал", cls: "intuition-panel__label" });
@@ -530,7 +576,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		const fadeRow = presentTimingAcc.body.createDiv({
+		const fadeRow = presentAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		fadeRow.createSpan({ text: "Плавность", cls: "intuition-panel__label" });
@@ -548,8 +594,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		// ── Шаффл ──
-		const presentShuffleRow = presentTimingAcc.body.createDiv({
+		const presentShuffleRow = presentAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		presentShuffleRow.createSpan({
@@ -565,14 +610,7 @@ export class ImageStylePanel {
 		});
 		presentShuffleLabel.createSpan({ cls: "intuition-text-panel__toggle-ui" });
 
-		// ── Переходы ──
-		const presentTransitionsAcc = this.createAccordion(
-			this.presentSection,
-			"Переходы",
-			false,
-		);
-
-		const kbRow = presentTransitionsAcc.body.createDiv({
+		const kbRow = presentAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		kbRow.createSpan({ text: "Кен Бёрнс", cls: "intuition-panel__label" });
@@ -590,7 +628,7 @@ export class ImageStylePanel {
 			cls: "intuition-panel__value",
 		});
 
-		const transitionRow = presentTransitionsAcc.body.createDiv({
+		const transitionRow = presentAcc.body.createDiv({
 			cls: "intuition-panel__row",
 		});
 		transitionRow.createSpan({ text: "Переход", cls: "intuition-panel__label" });
@@ -605,15 +643,8 @@ export class ImageStylePanel {
 			});
 		}
 
-		// ── Эффекты ──
-		const presentEffectsAcc = this.createAccordion(
-			this.presentSection,
-			"Эффекты",
-			false,
-		);
-
 		const makePresentToggleRow = (label: string, aria: string) => {
-			const row = presentEffectsAcc.body.createDiv({
+			const row = presentAcc.body.createDiv({
 				cls: "intuition-panel__row",
 			});
 			row.createSpan({ text: label, cls: "intuition-panel__label" });
@@ -628,10 +659,10 @@ export class ImageStylePanel {
 			return input;
 		};
 
-		const presentAuras = makePresentToggleRow("Ауры", "Ауры в слайдшоу");
+		const presentAuras = makePresentToggleRow("Ауры", "Ауры в показе");
 		const presentSparkles = makePresentToggleRow(
 			"Блестки",
-			"Блестки в слайдшоу",
+			"Блестки в показе",
 		);
 		const presentPaletteBg = makePresentToggleRow(
 			"Фон-палитра",
@@ -706,9 +737,12 @@ export class ImageStylePanel {
 			this.commitPresentation({ letterbox: presentLetterbox.checked }),
 		);
 
-		this.presentBtn = this.presentSection.createEl("button", {
+		const presentBtnRow = presentAcc.body.createDiv({
+			cls: "intuition-panel__row intuition-panel__row--full",
+		});
+		this.presentBtn = presentBtnRow.createEl("button", {
 			cls: "mod-cta intuition-panel__reset",
-			text: "Слайдшоу",
+			text: "Показ",
 			attr: {
 				title:
 					"Показать выбранные фото по очереди (аудио и прочее в выделении игнорируются)",
@@ -717,8 +751,6 @@ export class ImageStylePanel {
 		this.presentBtn.addEventListener("click", () =>
 			this.collageHooks?.onPresent(),
 		);
-
-		this.presentSection.hide();
 
 		const actions = body.createDiv({
 			cls: "intuition-panel__row intuition-panel__row--full intuition-panel__actions",
@@ -981,15 +1013,18 @@ export class ImageStylePanel {
 	}
 
 	private syncInputs() {
-		const transparency = toTransparency(this.style.opacity);
-		this.inputs.transparency.value = String(transparency);
-		this.inputs.transparencyValue.setText(`${transparency}%`);
 		this.inputs.borderColor.value = this.style.borderColor;
 		this.inputs.borderWidth.value = String(this.style.borderWidth);
 		this.inputs.borderWidthValue.setText(`${this.style.borderWidth}px`);
 		this.inputs.borderRadius.value = String(this.style.borderRadius);
 		this.inputs.borderRadiusValue.setText(`${this.style.borderRadius}px`);
 		this.inputs.borderStyle.value = this.style.borderStyle;
+		this.inputs.fitMode.value = this.style.fitMode === "crop" ? "crop" : "stretch";
+		this.inputs.focalX.value = String(this.style.focalX);
+		this.inputs.focalXValue.setText(`${this.style.focalX}%`);
+		this.inputs.focalY.value = String(this.style.focalY);
+		this.inputs.focalYValue.setText(`${this.style.focalY}%`);
+		this.syncCropControlsVisibility();
 		this.inputs.aura.checked = this.style.aura;
 		this.inputs.auraShimmer.checked = this.style.auraShimmer;
 		this.inputs.auraStrength.value = String(this.style.auraStrength);
@@ -1007,6 +1042,15 @@ export class ImageStylePanel {
 		this.inputs.auraStrength.disabled = !this.style.aura;
 		this.inputs.auraSize.disabled = !this.style.aura;
 		this.inputs.auraColor.disabled = !this.style.aura;
+	}
+
+	private syncCropControlsVisibility() {
+		const crop = this.style.fitMode === "crop";
+		if (crop) this.inputs.cropControls.show();
+		else this.inputs.cropControls.hide();
+		this.inputs.focalX.disabled = !crop;
+		this.inputs.focalY.disabled = !crop;
+		this.inputs.cropPanBtn.disabled = !this.nodes.length;
 	}
 
 	/** Apply changed fields to every selected image (keeps per-image aura colors unless overridden). */
