@@ -26,7 +26,7 @@ __export(main_exports, {
   default: () => IntuitionCanvasPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // ImageStylePanel.ts
 var import_obsidian = require("obsidian");
@@ -2875,495 +2875,13 @@ var CanvasStylePanel = class {
   }
 };
 
-// vibeTilt.ts
-var GLARE_CLS = "intuition-vibe-glare";
-var TILTING_ATTR = "data-intuition-vibe-tilting";
-var TEXT_GLOW_ATTR = "data-intuition-vibe-text";
-var FILTER_ATTR = "data-intuition-vibe-filter";
-var MAX_TILT_DEG = 9;
-var NEAR_PX = 280;
-var HOOK_ATTR = "data-intuition-vibe-hook";
-function maxMediaTiltsForZoom(zoom) {
-  if (zoom >= 0.85) return Number.POSITIVE_INFINITY;
-  if (zoom >= 0.45) return 5;
-  return 4;
-}
-var VibeTiltController = class {
-  constructor() {
-    this.enabled = false;
-    /** 0–1 tilt + media glare */
-    this.strength = 0.8;
-    /** 0–1 text glow on glyph hover */
-    this.textStrength = 0.25;
-    this.root = null;
-    this.getSuspended = () => false;
-    this.getSelectionCount = () => 0;
-    this.getCards = () => this.fallbackCards();
-    this.getZoom = () => 1;
-    this.dragging = false;
-    this.raf = 0;
-    this.lastX = 0;
-    this.lastY = 0;
-    this.onMove = null;
-    this.onDown = null;
-    this.onUp = null;
-    this.onLeave = null;
-    /** When true, don't toggle body/leaf vibe classes (presentation overlay). */
-    this.isolateGlobalClass = false;
-    this.glareEnabled = true;
-    /** Reacts to is-selected/is-focused toggles independent of pointer events —
-     * catches selection made via click-through on media controls, keyboard,
-     * or any path that never reaches our pointerdown listener. */
-    this.selectionObserver = null;
-    /** Soft drop-shadow on the text content layer (not the card chrome). */
-    this.textGlowFadeTimers = /* @__PURE__ */ new WeakMap();
-  }
-  attach(root, opts) {
-    this.root = root;
-    this.getSuspended = opts.getSuspended;
-    this.getSelectionCount = opts.getSelectionCount;
-    if (opts.getCards) this.getCards = opts.getCards;
-    if (opts.getZoom) this.getZoom = opts.getZoom;
-    this.isolateGlobalClass = !!opts.isolateGlobalClass;
-    this.glareEnabled = opts.glareEnabled !== false;
-    if (root.getAttribute(HOOK_ATTR) === "1") return;
-    root.setAttribute(HOOK_ATTR, "1");
-    this.onMove = (e) => {
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
-      if (!this.enabled) return;
-      if (this.raf) return;
-      this.raf = window.requestAnimationFrame(() => {
-        this.raf = 0;
-        this.tick(this.lastX, this.lastY);
-      });
-    };
-    this.onDown = (e) => {
-      if (!this.enabled) return;
-      const t = e.target;
-      if (!t) return;
-      const cursor = window.getComputedStyle(t).cursor.toLowerCase();
-      if (cursor.includes("resize") || cursor.includes("nwse") || cursor.includes("nesw") || cursor.includes("ew-") || cursor.includes("ns-")) {
-        this.clearAllEffects();
-        return;
-      }
-      if (t.closest(".canvas-node")) {
-        this.dragging = true;
-        this.clearAllEffects();
-      }
-    };
-    this.onUp = () => {
-      this.dragging = false;
-    };
-    this.onLeave = () => {
-      if (this.enabled) this.clearAllEffects();
-    };
-    root.addEventListener("pointermove", this.onMove, { passive: true });
-    root.addEventListener("pointerdown", this.onDown, {
-      passive: true,
-      capture: true
-    });
-    window.addEventListener("pointerup", this.onUp, { passive: true });
-    root.addEventListener("pointerleave", this.onLeave, { passive: true });
-    if (typeof MutationObserver !== "undefined") {
-      this.selectionObserver = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          const target = m.target;
-          if (!target.classList?.contains("canvas-node")) continue;
-          if (target.classList.contains("is-selected") || target.classList.contains("is-focused")) {
-            this.disableTiltForNode(target);
-          }
-        }
-      });
-      this.selectionObserver.observe(root, {
-        attributes: true,
-        attributeFilter: ["class"],
-        subtree: true
-      });
-    }
-  }
-  /** Immediately zero tilt/glare/text-glow for one canvas node (selection path). */
-  disableTiltForNode(node) {
-    const container = node.querySelector(".canvas-node-container") ?? node;
-    this.resetCard(container);
-    this.resetTextGlow(node);
-  }
-  /** Selected/focused nodes are being manipulated by the user — no tilt/glow.
-   * Walk up to the actual `.canvas-node` in case the tracked element is a
-   * descendant/wrapper rather than the node itself. */
-  isNodeSelected(node) {
-    const canvasNodeEl = node.closest(".canvas-node") ?? node;
-    return canvasNodeEl.classList.contains("is-selected") || canvasNodeEl.classList.contains("is-focused");
-  }
-  setEnabled(on) {
-    this.enabled = on;
-    if (this.root) {
-      this.root.classList.toggle("intuition-canvas-vibe", on);
-      if (!this.isolateGlobalClass) {
-        this.root.closest(".workspace-leaf-content")?.classList.toggle("intuition-canvas-vibe", on);
-        document.body.classList.toggle("intuition-canvas-vibe", on);
-      }
-    } else if (!this.isolateGlobalClass) {
-      document.body.classList.toggle("intuition-canvas-vibe", on);
-    }
-    if (!on) this.clearAllEffects();
-  }
-  /** strengthPercent: 0–100 — media tilt + glare */
-  setStrength(strengthPercent) {
-    this.strength = Math.min(1, Math.max(0, strengthPercent / 100));
-    if (this.strength <= 0.01 && this.textStrength <= 0.01) this.clearAllEffects();
-    else if (this.enabled && this.lastX && this.lastY) {
-      this.tick(this.lastX, this.lastY);
-    }
-  }
-  setZoom(zoom) {
-    void zoom;
-  }
-  liveZoom() {
-    const z = this.getZoom();
-    return typeof z === "number" && Number.isFinite(z) && z > 0 ? z : 1;
-  }
-  /** strengthPercent: 0–100 — text glow on glyph hover */
-  setTextStrength(strengthPercent) {
-    this.textStrength = Math.min(1, Math.max(0, strengthPercent / 100));
-    if (this.strength <= 0.01 && this.textStrength <= 0.01) this.clearAllEffects();
-    else if (this.enabled && this.lastX && this.lastY) {
-      this.tick(this.lastX, this.lastY);
-    }
-  }
-  isEnabled() {
-    return this.enabled;
-  }
-  destroy() {
-    this.selectionObserver?.disconnect();
-    this.selectionObserver = null;
-    if (this.root && this.onMove) {
-      this.root.removeEventListener("pointermove", this.onMove);
-      if (this.onDown) {
-        this.root.removeEventListener("pointerdown", this.onDown, {
-          capture: true
-        });
-      }
-      if (this.onLeave) this.root.removeEventListener("pointerleave", this.onLeave);
-      this.root.removeAttribute(HOOK_ATTR);
-      this.root.classList.remove("intuition-canvas-vibe");
-    }
-    if (this.onUp) window.removeEventListener("pointerup", this.onUp);
-    if (!this.isolateGlobalClass) {
-      document.body.classList.remove("intuition-canvas-vibe");
-      this.root?.closest(".workspace-leaf-content")?.classList.remove("intuition-canvas-vibe");
-    }
-    this.root?.classList.remove("intuition-canvas-vibe");
-    this.clearAllEffects();
-    this.root = null;
-    this.enabled = false;
-  }
-  fallbackCards() {
-    if (!this.root) return [];
-    const out = [];
-    const seen = /* @__PURE__ */ new Set();
-    const push = (el, kind) => {
-      if (seen.has(el) || el.classList.contains("is-group")) return;
-      seen.add(el);
-      out.push({ el, kind });
-    };
-    this.root.querySelectorAll(
-      ".canvas-node.is-text, .canvas-node[data-intuition-plain], .canvas-node[data-intuition-text-align]"
-    ).forEach((el) => push(el, "text"));
-    this.root.querySelectorAll(".canvas-node").forEach((el) => {
-      if (seen.has(el) || el.classList.contains("is-group")) return;
-      const hasImg = !!el.querySelector("img, .media-embed, .image-embed");
-      const hasText = !!el.querySelector(
-        ".markdown-preview-view, .markdown-source-view, .cm-editor, .cm-content"
-      ) || el.classList.contains("is-text");
-      if (hasText && !hasImg) push(el, "text");
-      else if (hasImg) push(el, "media");
-    });
-    return out;
-  }
-  tick(clientX, clientY) {
-    if (!this.root || !this.enabled) return;
-    const zoom = this.liveZoom();
-    if (this.strength <= 0.01 && this.textStrength <= 0.01) {
-      this.clearAllEffects();
-      return;
-    }
-    if (this.dragging || this.getSuspended() || this.getSelectionCount() > 1 || this.root.classList.contains("is-dragging") || this.root.classList.contains("intuition-canvas-panning") || this.root.classList.contains("intuition-canvas-zoom-settling") || this.root.querySelector(".canvas-node.is-dragging, .canvas-node.is-resizing")) {
-      this.clearAllEffects();
-      return;
-    }
-    const cards = this.getCards();
-    const nearPx = Math.max(56, NEAR_PX * Math.min(1, zoom / 0.9));
-    const maxTilts = maxMediaTiltsForZoom(zoom);
-    const hits = [];
-    const keep = /* @__PURE__ */ new Set();
-    for (const card of cards) {
-      const { el: node, kind } = card;
-      const isSelected = this.isNodeSelected(node);
-      if (kind === "text") {
-        if (!isSelected && this.textStrength > 0.01 && this.isPointerOverTextGlyphs(node, clientX, clientY)) {
-          this.paintTextGlow(node);
-        } else {
-          this.resetTextGlow(node);
-        }
-        continue;
-      }
-      if (isSelected || node.dataset.intuitionNoTilt === "1") {
-        this.disableTiltForNode(node);
-        continue;
-      }
-      const localMul = readTiltStrengthMul(node);
-      const cardStrength = this.strength * localMul;
-      if (cardStrength <= 0.01) {
-        const c = node.querySelector(
-          ".canvas-node-container"
-        );
-        if (c) this.resetCard(c);
-        continue;
-      }
-      const container = node.querySelector(".canvas-node-container") ?? node;
-      const rect = container.getBoundingClientRect();
-      if (rect.width < 4 || rect.height < 4) continue;
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      const dist = distToRect(clientX, clientY, rect);
-      const reach = Math.max(nearPx, Math.max(rect.width, rect.height) * 0.35);
-      const influence = 1 - Math.min(1, dist / reach);
-      if (influence <= 0.02) continue;
-      const nx = Math.max(
-        -1,
-        Math.min(1, (clientX - cx) / Math.max(8, rect.width / 2))
-      );
-      const ny = Math.max(
-        -1,
-        Math.min(1, (clientY - cy) / Math.max(8, rect.height / 2))
-      );
-      hits.push({ container, influence, nx, ny, cardStrength });
-    }
-    hits.sort((a, b) => b.influence - a.influence);
-    const winners = Number.isFinite(maxTilts) ? hits.slice(0, maxTilts) : hits;
-    for (const hit of winners) keep.add(hit.container);
-    for (const card of cards) {
-      if (card.kind !== "media") continue;
-      const container = card.el.querySelector(".canvas-node-container") ?? card.el;
-      if (!keep.has(container)) this.resetCard(container);
-    }
-    for (const hit of winners) {
-      const maxTilt = MAX_TILT_DEG * hit.cardStrength;
-      const rotY = hit.nx * maxTilt * hit.influence;
-      const rotX = -hit.ny * maxTilt * hit.influence;
-      hit.container.style.transition = "none";
-      hit.container.style.transform = `perspective(900px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg)`;
-      hit.container.setAttribute(TILTING_ATTR, "1");
-      if (this.glareEnabled) {
-        this.paintGlare(
-          hit.container,
-          hit.nx,
-          hit.ny,
-          hit.influence,
-          hit.cardStrength
-        );
-      }
-    }
-  }
-  /** True only when pointer is over glyph hosts — not empty card padding. */
-  isPointerOverTextGlyphs(node, clientX, clientY) {
-    const stack = document.elementsFromPoint(clientX, clientY);
-    for (const el of stack) {
-      if (!(el instanceof HTMLElement)) continue;
-      if (!node.contains(el)) continue;
-      if (el.classList.contains("canvas-node") || el.classList.contains("canvas-node-container") || el.classList.contains("canvas-node-content") || el.classList.contains("markdown-source-view") || el.classList.contains("cm-editor") || el.classList.contains("cm-scroller") || el.classList.contains("cm-contentContainer") || el.classList.contains("markdown-preview-sizer")) {
-        continue;
-      }
-      if (el.closest(
-        ".canvas-node-resizer, .canvas-node-connection-point, .canvas-node-label"
-      )) {
-        continue;
-      }
-      if (el.closest(
-        ".markdown-preview-view, .cm-content, .cm-line, .cm-widget"
-      ) || el.matches(
-        "p, span, a, li, h1, h2, h3, h4, h5, h6, strong, em, code, .cm-line, .cm-content"
-      )) {
-        return true;
-      }
-    }
-    return false;
-  }
-  paintTextGlow(node) {
-    if (this.textStrength <= 0.01) {
-      this.resetTextGlow(node);
-      return;
-    }
-    const s = this.textStrength * 0.9;
-    const accent = getComputedStyle(document.body).getPropertyValue("--interactive-accent").trim() || "#7a6bb5";
-    const aNear = colorToRgba(accent, 0.42 * s);
-    const aFar = colorToRgba(accent, 0.2 * s);
-    const bNear = (4 + 12 * s).toFixed(1);
-    const bFar = (12 + 28 * s).toFixed(1);
-    const bright = (1 + 0.05 * s).toFixed(3);
-    const targets = collectTextGlowTargets(node);
-    if (targets.length === 0) return;
-    node.setAttribute(TEXT_GLOW_ATTR, "1");
-    targets.forEach((el) => {
-      const prev = this.textGlowFadeTimers.get(el);
-      if (prev) {
-        window.clearTimeout(prev);
-        this.textGlowFadeTimers.delete(el);
-      }
-      el.style.setProperty("transition", "filter 0.18s ease-out", "important");
-      el.style.setProperty(
-        "filter",
-        `brightness(${bright}) drop-shadow(0 0 ${bNear}px ${aNear}) drop-shadow(0 0 ${bFar}px ${aFar})`,
-        "important"
-      );
-      el.setAttribute(FILTER_ATTR, "1");
-    });
-  }
-  clearGlowFilter(el) {
-    el.style.removeProperty("filter");
-    el.style.removeProperty("transition");
-    el.removeAttribute(FILTER_ATTR);
-  }
-  resetTextGlow(node) {
-    const targets = collectTextGlowTargets(node);
-    if (targets.length === 0 && !node.hasAttribute(TEXT_GLOW_ATTR)) return;
-    node.removeAttribute(TEXT_GLOW_ATTR);
-    targets.forEach((el) => {
-      const prev = this.textGlowFadeTimers.get(el);
-      if (prev) window.clearTimeout(prev);
-      el.style.setProperty(
-        "transition",
-        "filter 0.48s ease-in-out",
-        "important"
-      );
-      el.style.setProperty(
-        "filter",
-        "brightness(1) drop-shadow(0 0 0px transparent) drop-shadow(0 0 0px transparent)",
-        "important"
-      );
-      const id = window.setTimeout(() => {
-        this.clearGlowFilter(el);
-        this.textGlowFadeTimers.delete(el);
-      }, 500);
-      this.textGlowFadeTimers.set(el, id);
-    });
-  }
-  paintGlare(container, nx, ny, influence, cardStrength) {
-    let glare = container.querySelector(`.${GLARE_CLS}`);
-    if (!glare) {
-      glare = document.createElement("div");
-      glare.className = GLARE_CLS;
-      glare.setAttribute("aria-hidden", "true");
-      container.appendChild(glare);
-    }
-    const px = 50 + nx * 35;
-    const py = 50 + ny * 35;
-    const base = (0.12 + influence * 0.38) * cardStrength;
-    glare.style.opacity = String(base);
-    glare.style.background = `radial-gradient(
-			circle at ${px.toFixed(1)}% ${py.toFixed(1)}%,
-			rgba(255, 255, 255, 0.45) 0%,
-			rgba(255, 255, 255, 0.12) 28%,
-			transparent 58%
-		)`;
-  }
-  resetCard(container) {
-    if (!container.hasAttribute(TILTING_ATTR)) return;
-    container.style.transition = "transform 0.28s ease-out";
-    container.style.removeProperty("transform");
-    container.removeAttribute(TILTING_ATTR);
-    const glare = container.querySelector(`.${GLARE_CLS}`);
-    if (glare) glare.style.opacity = "0";
-  }
-  /** @deprecated alias — prefer clearAllEffects */
-  clearAllTilts() {
-    this.clearAllEffects();
-  }
-  clearAllEffects() {
-    const scope = this.root ?? document;
-    scope.querySelectorAll(`.${GLARE_CLS}`).forEach((el) => {
-      el.style.opacity = "0";
-    });
-    scope.querySelectorAll(`[${TILTING_ATTR}]`).forEach((el) => {
-      el.style.transition = "transform 0.28s ease-out";
-      el.style.removeProperty("transform");
-      el.removeAttribute(TILTING_ATTR);
-    });
-    scope.querySelectorAll(".intuition-vibe-tilt-plane").forEach((plane) => {
-      const parent = plane.parentElement;
-      if (!parent) {
-        plane.remove();
-        return;
-      }
-      while (plane.firstChild) parent.insertBefore(plane.firstChild, plane);
-      plane.remove();
-    });
-    scope.querySelectorAll(`[${TEXT_GLOW_ATTR}]`).forEach((el) => {
-      this.resetTextGlow(el);
-    });
-    scope.querySelectorAll(`[${FILTER_ATTR}]`).forEach((el) => {
-      el.style.removeProperty("filter");
-      el.style.removeProperty("transition");
-      el.removeAttribute(FILTER_ATTR);
-    });
-    scope.querySelectorAll(
-      ".intuition-vibe-shine-layer, .intuition-vibe-text-shine"
-    ).forEach((el) => el.remove());
-  }
-};
-function distToRect(x, y, r) {
-  const dx = Math.max(r.left - x, 0, x - r.right);
-  const dy = Math.max(r.top - y, 0, y - r.bottom);
-  return Math.hypot(dx, dy);
-}
-function readTiltStrengthMul(node) {
-  const raw = node.dataset.intuitionTiltStrength;
-  if (raw == null || raw === "") return 1;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return 1;
-  return Math.min(1, Math.max(0, n / 100));
-}
-function colorToRgba(color, alpha) {
-  const a = Math.min(1, Math.max(0, alpha));
-  const hex = color.trim();
-  if (/^#[0-9a-f]{3}$/i.test(hex)) {
-    const r = parseInt(hex[1] + hex[1], 16);
-    const g = parseInt(hex[2] + hex[2], 16);
-    const b = parseInt(hex[3] + hex[3], 16);
-    return `rgba(${r}, ${g}, ${b}, ${a})`;
-  }
-  if (/^#[0-9a-f]{6}$/i.test(hex)) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${a})`;
-  }
-  const m = color.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
-  if (m) return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${a})`;
-  return `rgba(122, 107, 181, ${a})`;
-}
-function collectTextGlowTargets(node) {
-  const out = [];
-  const preview = node.querySelector(
-    ".markdown-preview-view"
-  );
-  const cm = node.querySelector(".cm-content");
-  if (preview) out.push(preview);
-  if (cm) out.push(cm);
-  if (out.length === 0) {
-    const content = node.querySelector(
-      ".canvas-node-content"
-    );
-    if (content) out.push(content);
-  }
-  return out;
-}
+// VibePanel.ts
+var import_obsidian4 = require("obsidian");
 
 // vibeSparkles.ts
 var LAYER_CLS = "intuition-vibe-sparkles-canvas";
 var LAYER_ATTR = "data-intuition-vibe-sparkles-canvas";
-var HOOK_ATTR2 = "data-intuition-vibe-sparkle-hook";
+var HOOK_ATTR = "data-intuition-vibe-sparkle-hook";
 var CARD_SEL = ".canvas-node.is-text, .canvas-node.is-file, .canvas-node.is-media";
 var SPARKLE_LIMITS = {
   amount: { min: 0, max: 500 },
@@ -3459,11 +2977,11 @@ var VibeSparkleController = class {
     this.getSuspended = opts.getSuspended;
     this.getSelectionCount = opts.getSelectionCount;
     if (opts.getZoom) this.getZoom = opts.getZoom;
-    if (root.getAttribute(HOOK_ATTR2) === "1") {
+    if (root.getAttribute(HOOK_ATTR) === "1") {
       this.ensureCanvas();
       return;
     }
-    root.setAttribute(HOOK_ATTR2, "1");
+    root.setAttribute(HOOK_ATTR, "1");
     document.addEventListener("visibilitychange", this.onVisibility);
     this.ensureCanvas();
   }
@@ -3545,7 +3063,7 @@ var VibeSparkleController = class {
     this.canvas?.remove();
     this.canvas = null;
     this.ctx = null;
-    this.root?.removeAttribute(HOOK_ATTR2);
+    this.root?.removeAttribute(HOOK_ATTR);
     this.root = null;
     this.enabled = false;
   }
@@ -3884,6 +3402,1067 @@ function normalizeHex3(value) {
   return DEFAULT_SPARKLE_CONFIG.color;
 }
 
+// settings.ts
+var DEFAULT_GLOBAL_AURA = {
+  enabled: true,
+  shimmer: true,
+  strength: 50,
+  size: 100
+};
+function normalizeGlobalAura(partial) {
+  const p = partial ?? {};
+  return {
+    enabled: p.enabled ?? DEFAULT_GLOBAL_AURA.enabled,
+    shimmer: p.shimmer ?? DEFAULT_GLOBAL_AURA.shimmer,
+    strength: Math.min(
+      100,
+      Math.max(0, Math.round(p.strength ?? DEFAULT_GLOBAL_AURA.strength))
+    ),
+    size: Math.min(
+      200,
+      Math.max(0, Math.round(p.size ?? DEFAULT_GLOBAL_AURA.size))
+    )
+  };
+}
+var DEFAULT_SETTINGS = {
+  hideImageLabels: true,
+  hideAuras: false,
+  vibeMode: false,
+  vibeStrength: 40,
+  vibeTextStrength: 28,
+  vibeStrengthScale: 2,
+  vibeSparkleScale: 3,
+  vibeSparkles: { ...DEFAULT_SPARKLE_CONFIG },
+  globalAura: { ...DEFAULT_GLOBAL_AURA },
+  vibePanelSections: {
+    tilt: true,
+    sparkles: false,
+    auras: false
+  },
+  canvasChrome: {},
+  collageGap: 16,
+  collagePackAxis: "cols",
+  collageCount: COLLAGE_COUNT_DEFAULT,
+  presentation: { ...DEFAULT_PRESENTATION_SETTINGS },
+  stickyAudioVolume: 80,
+  stickyAudioLoop: false
+};
+var VIBE_STRENGTH_SCALE = 2;
+var VIBE_SPARKLE_SCALE = 3;
+function clampPercent(value, fallback) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+function migrateSettings(raw) {
+  const settings = Object.assign(
+    {},
+    DEFAULT_SETTINGS,
+    raw
+  );
+  if (!settings.canvasChrome) settings.canvasChrome = {};
+  const hadLegacySparkle = typeof raw?.vibeSparkle === "number";
+  const legacyAmount = hadLegacySparkle ? raw.vibeSparkle : raw?.vibeSparkles?.amount;
+  const prevSparkleScale = raw?.vibeSparkleScale ?? 1;
+  const mergedSparkles = {
+    ...DEFAULT_SPARKLE_CONFIG,
+    ...raw?.vibeSparkles ?? {},
+    ...legacyAmount != null ? { amount: legacyAmount } : {}
+  };
+  settings.vibeSparkles = prevSparkleScale < VIBE_SPARKLE_SCALE ? migrateLegacySparkleConfig(mergedSparkles) : normalizeSparkleConfig(mergedSparkles);
+  settings.globalAura = normalizeGlobalAura(raw?.globalAura);
+  settings.presentation = normalizePresentationSettings(raw?.presentation);
+  settings.stickyAudioVolume = Math.min(
+    100,
+    Math.max(
+      0,
+      Math.round(
+        Number(raw?.stickyAudioVolume ?? DEFAULT_SETTINGS.stickyAudioVolume)
+      )
+    )
+  );
+  settings.stickyAudioLoop = !!(raw?.stickyAudioLoop ?? DEFAULT_SETTINGS.stickyAudioLoop);
+  settings.vibeTextStrength = clampPercent(
+    raw?.vibeTextStrength ?? DEFAULT_SETTINGS.vibeTextStrength,
+    DEFAULT_SETTINGS.vibeTextStrength
+  );
+  settings.vibePanelSections = {
+    ...DEFAULT_SETTINGS.vibePanelSections,
+    ...raw?.vibePanelSections ?? {}
+  };
+  let migrated = false;
+  const prevTiltScale = settings.vibeStrengthScale ?? 1;
+  if (prevTiltScale < VIBE_STRENGTH_SCALE) {
+    const factor = prevTiltScale / VIBE_STRENGTH_SCALE;
+    settings.vibeStrength = clampPercent(
+      settings.vibeStrength * factor,
+      DEFAULT_SETTINGS.vibeStrength
+    );
+    migrated = true;
+  }
+  if (prevSparkleScale < VIBE_SPARKLE_SCALE) {
+    migrated = true;
+  }
+  const settingsBag = settings;
+  if (hadLegacySparkle || "vibeSparkle" in settingsBag) {
+    delete settingsBag.vibeSparkle;
+    migrated = true;
+  }
+  settings.vibeStrengthScale = VIBE_STRENGTH_SCALE;
+  settings.vibeSparkleScale = VIBE_SPARKLE_SCALE;
+  settings.collageGap = clampCollageGap(
+    settings.collageGap ?? DEFAULT_SETTINGS.collageGap
+  );
+  const rawAny = raw ?? {};
+  const hadLegacyCollage = "collageArrange" in rawAny || "collageCenterSize" in rawAny || "collageSizeMode" in rawAny || "collageFixedAxis" in rawAny || "collageFixedSize" in rawAny || !("collagePackAxis" in rawAny) && !("collageCount" in rawAny);
+  settings.collagePackAxis = normalizeCollagePackAxis(
+    rawAny.collagePackAxis ?? DEFAULT_SETTINGS.collagePackAxis
+  );
+  const packAxis = settings.collagePackAxis;
+  const legacyCount = typeof rawAny.collageCount === "number" ? rawAny.collageCount : packAxis === "rows" && typeof rawAny.collageRows === "number" ? rawAny.collageRows : typeof rawAny.collageCols === "number" ? rawAny.collageCols : DEFAULT_SETTINGS.collageCount;
+  settings.collageCount = clampCollageCount(legacyCount);
+  if (hadLegacyCollage) migrated = true;
+  delete settingsBag.collageArrange;
+  delete settingsBag.collageCenterSize;
+  delete settingsBag.collageSizeMode;
+  delete settingsBag.collageFixedAxis;
+  delete settingsBag.collageFixedSize;
+  delete settingsBag.collageCols;
+  delete settingsBag.collageRows;
+  return { settings, migrated };
+}
+
+// VibePanel.ts
+var VibePanel = class {
+  constructor(parent, callbacks) {
+    this.callbacks = callbacks;
+    this.el = document.createElement("div");
+    this.el.className = "intuition-vibe-panel";
+    this.el.setAttribute("data-intuition-vibe-panel", "1");
+    const sections = callbacks.getSections();
+    const cfg = normalizeSparkleConfig(callbacks.getSparkles());
+    const aura = normalizeGlobalAura(callbacks.getAura());
+    const tiltSec = this.createAccordion("tilt", "\u0420\u0435\u0430\u043A\u0446\u0438\u044F", !!sections.tilt);
+    tiltSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u041D\u0430\u043A\u043B\u043E\u043D",
+        sliderClass: "intuition-vibe-panel__slider--tilt",
+        valueClass: "intuition-vibe-panel__value--tilt",
+        aria: "\u0421\u0438\u043B\u0430 \u043D\u0430\u043A\u043B\u043E\u043D\u0430 \u043A\u0430\u0440\u0442\u0438\u043D\u043E\u043A",
+        initial: callbacks.getVibeStrength(),
+        onInput: (n) => callbacks.onStrength(n)
+      })
+    );
+    tiltSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u0422\u0435\u043A\u0441\u0442",
+        sliderClass: "intuition-vibe-panel__slider--text",
+        valueClass: "intuition-vibe-panel__value--text",
+        aria: "\u0421\u0438\u043B\u0430 \u0441\u0432\u0435\u0447\u0435\u043D\u0438\u044F \u0442\u0435\u043A\u0441\u0442\u0430 \u043F\u0440\u0438 \u043D\u0430\u0432\u0435\u0434\u0435\u043D\u0438\u0438",
+        initial: callbacks.getVibeTextStrength(),
+        onInput: (n) => callbacks.onTextStrength(n)
+      })
+    );
+    const sparkSec = this.createAccordion(
+      "sparkles",
+      "\u0411\u043B\u0435\u0441\u0442\u043A\u0438",
+      !!sections.sparkles
+    );
+    sparkSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u041A\u043E\u043B-\u0432\u043E",
+        sliderClass: "intuition-vibe-panel__slider--amount",
+        valueClass: "intuition-vibe-panel__value--amount",
+        aria: "\u041C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u043E\u0435 \u043A\u043E\u043B\u0438\u0447\u0435\u0441\u0442\u0432\u043E \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
+        min: SPARKLE_LIMITS.amount.min,
+        max: SPARKLE_LIMITS.amount.max,
+        initial: cfg.amount,
+        format: (n) => String(n),
+        onInput: (n) => callbacks.onSparkles({ amount: n })
+      })
+    );
+    sparkSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u0427\u0430\u0441\u0442\u043E\u0442\u0430",
+        sliderClass: "intuition-vibe-panel__slider--freq",
+        valueClass: "intuition-vibe-panel__value--freq",
+        aria: "\u0427\u0430\u0441\u0442\u043E\u0442\u0430 \u0441\u043F\u0430\u0432\u043D\u0430 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
+        min: SPARKLE_LIMITS.frequency.min,
+        max: SPARKLE_LIMITS.frequency.max,
+        initial: cfg.frequency,
+        format: (n) => String(n),
+        onInput: (n) => callbacks.onSparkles({ frequency: n })
+      })
+    );
+    sparkSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u0420\u0430\u0437\u043C\u0435\u0440",
+        sliderClass: "intuition-vibe-panel__slider--size",
+        valueClass: "intuition-vibe-panel__value--size",
+        aria: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
+        min: SPARKLE_LIMITS.size.min,
+        max: SPARKLE_LIMITS.size.max,
+        initial: cfg.size,
+        format: (n) => `${n}px`,
+        onInput: (n) => callbacks.onSparkles({ size: n })
+      })
+    );
+    sparkSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u0416\u0438\u0437\u043D\u044C",
+        sliderClass: "intuition-vibe-panel__slider--life",
+        valueClass: "intuition-vibe-panel__value--life",
+        aria: "\u0412\u0440\u0435\u043C\u044F \u0436\u0438\u0437\u043D\u0438 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
+        min: SPARKLE_LIMITS.lifetime.min,
+        max: SPARKLE_LIMITS.lifetime.max,
+        step: 100,
+        initial: cfg.lifetime,
+        format: (n) => `${(n / 1e3).toFixed(1)}\u0441`,
+        onInput: (n) => callbacks.onSparkles({ lifetime: n })
+      })
+    );
+    sparkSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u042F\u0440\u043A\u043E\u0441\u0442\u044C",
+        sliderClass: "intuition-vibe-panel__slider--opacity",
+        valueClass: "intuition-vibe-panel__value--opacity",
+        aria: "\u042F\u0440\u043A\u043E\u0441\u0442\u044C \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
+        min: SPARKLE_LIMITS.opacity.min,
+        max: SPARKLE_LIMITS.opacity.max,
+        initial: cfg.opacity,
+        onInput: (n) => callbacks.onSparkles({ opacity: n })
+      })
+    );
+    sparkSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u041F\u043E\u0434\u044A\u0451\u043C",
+        sliderClass: "intuition-vibe-panel__slider--drift",
+        valueClass: "intuition-vibe-panel__value--drift",
+        aria: "\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u043F\u043E\u0434\u044A\u0451\u043C\u0430 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
+        min: SPARKLE_LIMITS.drift.min,
+        max: SPARKLE_LIMITS.drift.max,
+        initial: cfg.drift,
+        format: (n) => String(n),
+        onInput: (n) => callbacks.onSparkles({ drift: n })
+      })
+    );
+    const colorRow = document.createElement("div");
+    colorRow.className = "intuition-vibe-panel__row";
+    const colorLabel = document.createElement("span");
+    colorLabel.className = "intuition-vibe-panel__label";
+    colorLabel.textContent = "\u0426\u0432\u0435\u0442";
+    const colorInput = document.createElement("input");
+    colorInput.type = "color";
+    colorInput.className = "intuition-vibe-panel__color intuition-vibe-panel__slider--color";
+    colorInput.value = cfg.color;
+    colorInput.setAttribute("aria-label", "\u0426\u0432\u0435\u0442 \u0431\u043B\u0435\u0441\u0442\u043E\u043A");
+    colorInput.addEventListener("pointerdown", (e) => e.stopPropagation());
+    colorInput.addEventListener("click", (e) => e.stopPropagation());
+    colorInput.addEventListener(
+      "input",
+      () => callbacks.onSparkles({ color: colorInput.value })
+    );
+    colorRow.appendChild(colorLabel);
+    colorRow.appendChild(colorInput);
+    sparkSec.body.appendChild(colorRow);
+    const resetSparkle = document.createElement("div");
+    resetSparkle.className = "intuition-vibe-panel__row intuition-vibe-panel__row--full";
+    const resetSparkleBtn = document.createElement("button");
+    resetSparkleBtn.type = "button";
+    resetSparkleBtn.className = "mod-muted intuition-vibe-panel__reset";
+    resetSparkleBtn.textContent = "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0431\u043B\u0435\u0441\u0442\u043A\u0438";
+    resetSparkleBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    resetSparkleBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      callbacks.onResetSparkles();
+    });
+    resetSparkle.appendChild(resetSparkleBtn);
+    sparkSec.body.appendChild(resetSparkle);
+    const auraSec = this.createAccordion("auras", "\u0410\u0443\u0440\u044B", !!sections.auras);
+    auraSec.body.appendChild(
+      this.createToggleRow({
+        label: "\u0412\u043A\u043B.",
+        inputClass: "intuition-vibe-panel__aura-enabled",
+        checked: aura.enabled,
+        aria: "\u0410\u0443\u0440\u044B \u043D\u0430 \u0432\u0441\u0435\u0445 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0430\u0445",
+        onChange: (on) => callbacks.onAura({ enabled: on })
+      })
+    );
+    auraSec.body.appendChild(
+      this.createToggleRow({
+        label: "\u041F\u0435\u0440\u0435\u043B\u0438\u0432",
+        inputClass: "intuition-vibe-panel__aura-shimmer",
+        checked: aura.shimmer,
+        aria: "\u041F\u0435\u0440\u0435\u043B\u0438\u0432 \u0430\u0443\u0440\u044B",
+        onChange: (on) => callbacks.onAura({ shimmer: on })
+      })
+    );
+    auraSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u0421\u0438\u043B\u0430",
+        sliderClass: "intuition-vibe-panel__slider--aura-str",
+        valueClass: "intuition-vibe-panel__value--aura-str",
+        aria: "\u0421\u0438\u043B\u0430 \u0430\u0443\u0440\u044B",
+        initial: aura.strength,
+        onInput: (n) => callbacks.onAura({ strength: n })
+      })
+    );
+    auraSec.body.appendChild(
+      this.createSliderRow({
+        label: "\u041F\u043B\u043E\u0449\u0430\u0434\u044C",
+        sliderClass: "intuition-vibe-panel__slider--aura-size",
+        valueClass: "intuition-vibe-panel__value--aura-size",
+        aria: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0430\u0443\u0440\u044B",
+        min: 0,
+        max: 200,
+        step: 5,
+        initial: aura.size,
+        format: (n) => `${n}%`,
+        onInput: (n) => callbacks.onAura({ size: n })
+      })
+    );
+    const applyAuraRow = document.createElement("div");
+    applyAuraRow.className = "intuition-vibe-panel__row intuition-vibe-panel__row--full";
+    const applyAuraBtn = document.createElement("button");
+    applyAuraBtn.type = "button";
+    applyAuraBtn.className = "mod-cta intuition-vibe-panel__reset";
+    applyAuraBtn.textContent = "\u041F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C \u043A\u043E \u0432\u0441\u0435\u043C";
+    applyAuraBtn.title = "\u0417\u0430\u043F\u0438\u0441\u0430\u0442\u044C \u044D\u0442\u0438 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0430\u0443\u0440\u044B \u043D\u0430 \u0432\u0441\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430";
+    applyAuraBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    applyAuraBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      callbacks.onApplyAuraAll();
+    });
+    applyAuraRow.appendChild(applyAuraBtn);
+    auraSec.body.appendChild(applyAuraRow);
+    const resetAuraRow = document.createElement("div");
+    resetAuraRow.className = "intuition-vibe-panel__row intuition-vibe-panel__row--full";
+    const resetAuraBtn = document.createElement("button");
+    resetAuraBtn.type = "button";
+    resetAuraBtn.className = "mod-muted intuition-vibe-panel__reset";
+    resetAuraBtn.textContent = "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0430\u0443\u0440\u044B";
+    resetAuraBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    resetAuraBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      callbacks.onResetAura();
+    });
+    resetAuraRow.appendChild(resetAuraBtn);
+    auraSec.body.appendChild(resetAuraRow);
+    parent.appendChild(this.el);
+  }
+  setVisible(visible) {
+    this.el.hidden = !visible;
+  }
+  reattach(parent) {
+    if (!this.el.isConnected) parent.appendChild(this.el);
+  }
+  destroy() {
+    this.el.remove();
+  }
+  sync(opts) {
+    this.el.hidden = !opts.visible;
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--tilt",
+      ".intuition-vibe-panel__value--tilt",
+      opts.strength,
+      (n) => `${n}%`
+    );
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--text",
+      ".intuition-vibe-panel__value--text",
+      opts.textStrength,
+      (n) => `${n}%`
+    );
+    this.syncSparkleControls(opts.sparkles);
+    this.syncAuraControls(opts.aura);
+  }
+  syncStrength(pct) {
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--tilt",
+      ".intuition-vibe-panel__value--tilt",
+      pct
+    );
+  }
+  syncTextStrength(pct) {
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--text",
+      ".intuition-vibe-panel__value--text",
+      pct
+    );
+  }
+  syncSparkles(cfg = normalizeSparkleConfig(
+    this.callbacks.getSparkles()
+  )) {
+    this.syncSparkleControls(cfg);
+  }
+  syncAura(g = normalizeGlobalAura(this.callbacks.getAura())) {
+    this.syncAuraControls(g);
+  }
+  syncSparkleControls(cfg) {
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--amount",
+      ".intuition-vibe-panel__value--amount",
+      cfg.amount,
+      (n) => String(n)
+    );
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--freq",
+      ".intuition-vibe-panel__value--freq",
+      cfg.frequency,
+      (n) => String(n)
+    );
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--size",
+      ".intuition-vibe-panel__value--size",
+      cfg.size,
+      (n) => `${n}px`
+    );
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--life",
+      ".intuition-vibe-panel__value--life",
+      cfg.lifetime,
+      (n) => `${(n / 1e3).toFixed(1)}\u0441`
+    );
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--opacity",
+      ".intuition-vibe-panel__value--opacity",
+      cfg.opacity
+    );
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--drift",
+      ".intuition-vibe-panel__value--drift",
+      cfg.drift,
+      (n) => String(n)
+    );
+    const color = this.el.querySelector(
+      ".intuition-vibe-panel__slider--color"
+    );
+    if (color) color.value = cfg.color;
+  }
+  syncAuraControls(g) {
+    const enabled = this.el.querySelector(
+      ".intuition-vibe-panel__aura-enabled"
+    );
+    const shimmer = this.el.querySelector(
+      ".intuition-vibe-panel__aura-shimmer"
+    );
+    if (enabled) enabled.checked = g.enabled;
+    if (shimmer) shimmer.checked = g.shimmer;
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--aura-str",
+      ".intuition-vibe-panel__value--aura-str",
+      g.strength
+    );
+    this.syncSlider(
+      ".intuition-vibe-panel__slider--aura-size",
+      ".intuition-vibe-panel__value--aura-size",
+      g.size,
+      (n) => `${n}%`
+    );
+    if (shimmer) shimmer.disabled = !g.enabled;
+    const str = this.el.querySelector(
+      ".intuition-vibe-panel__slider--aura-str"
+    );
+    const size = this.el.querySelector(
+      ".intuition-vibe-panel__slider--aura-size"
+    );
+    if (str) str.disabled = !g.enabled;
+    if (size) size.disabled = !g.enabled;
+  }
+  syncSlider(sliderSel, valueSel, pct, format = (n) => `${n}%`) {
+    const slider = this.el.querySelector(sliderSel);
+    const value = this.el.querySelector(valueSel);
+    if (slider) slider.value = String(pct);
+    if (value) value.textContent = format(pct);
+  }
+  createAccordion(key, title, open) {
+    const section = document.createElement("div");
+    section.className = "intuition-vibe-panel__accordion";
+    section.dataset.section = key;
+    if (open) section.classList.add("is-open");
+    const head = document.createElement("div");
+    head.className = "intuition-vibe-panel__accordion-head";
+    head.setAttribute("role", "button");
+    head.tabIndex = 0;
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    const chevron = document.createElement("span");
+    chevron.className = "intuition-vibe-panel__accordion-chevron";
+    (0, import_obsidian4.setIcon)(chevron, "chevron-right");
+    const label = document.createElement("span");
+    label.className = "intuition-vibe-panel__accordion-title";
+    label.textContent = title;
+    head.appendChild(chevron);
+    head.appendChild(label);
+    const body = document.createElement("div");
+    body.className = "intuition-vibe-panel__accordion-body";
+    const toggle = () => {
+      const next = !section.classList.contains("is-open");
+      section.classList.toggle("is-open", next);
+      head.setAttribute("aria-expanded", next ? "true" : "false");
+      this.callbacks.onSectionToggle(key, next);
+    };
+    head.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggle();
+    });
+    head.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+    section.appendChild(head);
+    section.appendChild(body);
+    this.el.appendChild(section);
+    return { section, body, head };
+  }
+  createToggleRow(opts) {
+    const row = document.createElement("div");
+    row.className = "intuition-vibe-panel__row";
+    const label = document.createElement("span");
+    label.className = "intuition-vibe-panel__label";
+    label.textContent = opts.label;
+    const wrap = document.createElement("label");
+    wrap.className = "intuition-text-panel__toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = opts.inputClass;
+    input.checked = opts.checked;
+    input.setAttribute("aria-label", opts.aria);
+    wrap.appendChild(input);
+    wrap.appendChild(
+      Object.assign(document.createElement("span"), {
+        className: "intuition-text-panel__toggle-ui"
+      })
+    );
+    input.addEventListener("change", () => opts.onChange(input.checked));
+    row.appendChild(label);
+    row.appendChild(wrap);
+    return row;
+  }
+  createSliderRow(opts) {
+    const row = document.createElement("div");
+    row.className = "intuition-vibe-panel__row";
+    const label = document.createElement("span");
+    label.className = "intuition-vibe-panel__label";
+    label.textContent = opts.label;
+    const wrap = document.createElement("div");
+    wrap.className = "intuition-vibe-panel__size";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = String(opts.min ?? 0);
+    slider.max = String(opts.max ?? 100);
+    slider.step = String(opts.step ?? 1);
+    slider.className = `intuition-vibe-panel__slider ${opts.sliderClass}`;
+    slider.value = String(opts.initial);
+    slider.setAttribute("aria-label", opts.aria);
+    const value = document.createElement("span");
+    value.className = `intuition-vibe-panel__value ${opts.valueClass}`;
+    const fmt = opts.format ?? ((n) => `${n}%`);
+    value.textContent = fmt(Number(slider.value));
+    slider.addEventListener("pointerdown", (e) => e.stopPropagation());
+    slider.addEventListener("click", (e) => e.stopPropagation());
+    slider.addEventListener("input", () => {
+      const n = Number(slider.value);
+      value.textContent = fmt(n);
+      opts.onInput(n);
+    });
+    wrap.appendChild(slider);
+    wrap.appendChild(value);
+    row.appendChild(label);
+    row.appendChild(wrap);
+    return row;
+  }
+};
+
+// vibeTilt.ts
+var GLARE_CLS = "intuition-vibe-glare";
+var TILTING_ATTR = "data-intuition-vibe-tilting";
+var TEXT_GLOW_ATTR = "data-intuition-vibe-text";
+var FILTER_ATTR = "data-intuition-vibe-filter";
+var MAX_TILT_DEG = 9;
+var NEAR_PX = 280;
+var HOOK_ATTR2 = "data-intuition-vibe-hook";
+function maxMediaTiltsForZoom(zoom) {
+  if (zoom >= 0.85) return Number.POSITIVE_INFINITY;
+  if (zoom >= 0.45) return 5;
+  return 4;
+}
+var VibeTiltController = class {
+  constructor() {
+    this.enabled = false;
+    /** 0–1 tilt + media glare */
+    this.strength = 0.8;
+    /** 0–1 text glow on glyph hover */
+    this.textStrength = 0.25;
+    this.root = null;
+    this.getSuspended = () => false;
+    this.getSelectionCount = () => 0;
+    this.getCards = () => this.fallbackCards();
+    this.getZoom = () => 1;
+    this.dragging = false;
+    this.raf = 0;
+    this.lastX = 0;
+    this.lastY = 0;
+    this.onMove = null;
+    this.onDown = null;
+    this.onUp = null;
+    this.onLeave = null;
+    /** When true, don't toggle body/leaf vibe classes (presentation overlay). */
+    this.isolateGlobalClass = false;
+    this.glareEnabled = true;
+    /** Reacts to is-selected/is-focused toggles independent of pointer events —
+     * catches selection made via click-through on media controls, keyboard,
+     * or any path that never reaches our pointerdown listener. */
+    this.selectionObserver = null;
+    /** Soft drop-shadow on the text content layer (not the card chrome). */
+    this.textGlowFadeTimers = /* @__PURE__ */ new WeakMap();
+  }
+  attach(root, opts) {
+    this.root = root;
+    this.getSuspended = opts.getSuspended;
+    this.getSelectionCount = opts.getSelectionCount;
+    if (opts.getCards) this.getCards = opts.getCards;
+    if (opts.getZoom) this.getZoom = opts.getZoom;
+    this.isolateGlobalClass = !!opts.isolateGlobalClass;
+    this.glareEnabled = opts.glareEnabled !== false;
+    if (root.getAttribute(HOOK_ATTR2) === "1") return;
+    root.setAttribute(HOOK_ATTR2, "1");
+    this.onMove = (e) => {
+      this.lastX = e.clientX;
+      this.lastY = e.clientY;
+      if (!this.enabled) return;
+      if (this.raf) return;
+      this.raf = window.requestAnimationFrame(() => {
+        this.raf = 0;
+        this.tick(this.lastX, this.lastY);
+      });
+    };
+    this.onDown = (e) => {
+      if (!this.enabled) return;
+      const t = e.target;
+      if (!t) return;
+      const cursor = window.getComputedStyle(t).cursor.toLowerCase();
+      if (cursor.includes("resize") || cursor.includes("nwse") || cursor.includes("nesw") || cursor.includes("ew-") || cursor.includes("ns-")) {
+        this.clearAllEffects();
+        return;
+      }
+      if (t.closest(".canvas-node")) {
+        this.dragging = true;
+        this.clearAllEffects();
+      }
+    };
+    this.onUp = () => {
+      this.dragging = false;
+    };
+    this.onLeave = () => {
+      if (this.enabled) this.clearAllEffects();
+    };
+    root.addEventListener("pointermove", this.onMove, { passive: true });
+    root.addEventListener("pointerdown", this.onDown, {
+      passive: true,
+      capture: true
+    });
+    window.addEventListener("pointerup", this.onUp, { passive: true });
+    root.addEventListener("pointerleave", this.onLeave, { passive: true });
+    if (typeof MutationObserver !== "undefined") {
+      this.selectionObserver = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          const target = m.target;
+          if (!target.classList?.contains("canvas-node")) continue;
+          if (target.classList.contains("is-selected") || target.classList.contains("is-focused")) {
+            this.disableTiltForNode(target);
+          }
+        }
+      });
+      this.selectionObserver.observe(root, {
+        attributes: true,
+        attributeFilter: ["class"],
+        subtree: true
+      });
+    }
+  }
+  /** Immediately zero tilt/glare/text-glow for one canvas node (selection path). */
+  disableTiltForNode(node) {
+    const container = node.querySelector(".canvas-node-container") ?? node;
+    this.resetCard(container);
+    this.resetTextGlow(node);
+  }
+  /** Selected/focused nodes are being manipulated by the user — no tilt/glow.
+   * Walk up to the actual `.canvas-node` in case the tracked element is a
+   * descendant/wrapper rather than the node itself. */
+  isNodeSelected(node) {
+    const canvasNodeEl = node.closest(".canvas-node") ?? node;
+    return canvasNodeEl.classList.contains("is-selected") || canvasNodeEl.classList.contains("is-focused");
+  }
+  setEnabled(on) {
+    this.enabled = on;
+    if (this.root) {
+      this.root.classList.toggle("intuition-canvas-vibe", on);
+      if (!this.isolateGlobalClass) {
+        this.root.closest(".workspace-leaf-content")?.classList.toggle("intuition-canvas-vibe", on);
+        document.body.classList.toggle("intuition-canvas-vibe", on);
+      }
+    } else if (!this.isolateGlobalClass) {
+      document.body.classList.toggle("intuition-canvas-vibe", on);
+    }
+    if (!on) this.clearAllEffects();
+  }
+  /** strengthPercent: 0–100 — media tilt + glare */
+  setStrength(strengthPercent) {
+    this.strength = Math.min(1, Math.max(0, strengthPercent / 100));
+    if (this.strength <= 0.01 && this.textStrength <= 0.01) this.clearAllEffects();
+    else if (this.enabled && this.lastX && this.lastY) {
+      this.tick(this.lastX, this.lastY);
+    }
+  }
+  setZoom(zoom) {
+    void zoom;
+  }
+  liveZoom() {
+    const z = this.getZoom();
+    return typeof z === "number" && Number.isFinite(z) && z > 0 ? z : 1;
+  }
+  /** strengthPercent: 0–100 — text glow on glyph hover */
+  setTextStrength(strengthPercent) {
+    this.textStrength = Math.min(1, Math.max(0, strengthPercent / 100));
+    if (this.strength <= 0.01 && this.textStrength <= 0.01) this.clearAllEffects();
+    else if (this.enabled && this.lastX && this.lastY) {
+      this.tick(this.lastX, this.lastY);
+    }
+  }
+  isEnabled() {
+    return this.enabled;
+  }
+  destroy() {
+    this.selectionObserver?.disconnect();
+    this.selectionObserver = null;
+    if (this.root && this.onMove) {
+      this.root.removeEventListener("pointermove", this.onMove);
+      if (this.onDown) {
+        this.root.removeEventListener("pointerdown", this.onDown, {
+          capture: true
+        });
+      }
+      if (this.onLeave) this.root.removeEventListener("pointerleave", this.onLeave);
+      this.root.removeAttribute(HOOK_ATTR2);
+      this.root.classList.remove("intuition-canvas-vibe");
+    }
+    if (this.onUp) window.removeEventListener("pointerup", this.onUp);
+    if (!this.isolateGlobalClass) {
+      document.body.classList.remove("intuition-canvas-vibe");
+      this.root?.closest(".workspace-leaf-content")?.classList.remove("intuition-canvas-vibe");
+    }
+    this.root?.classList.remove("intuition-canvas-vibe");
+    this.clearAllEffects();
+    this.root = null;
+    this.enabled = false;
+  }
+  fallbackCards() {
+    if (!this.root) return [];
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    const push = (el, kind) => {
+      if (seen.has(el) || el.classList.contains("is-group")) return;
+      seen.add(el);
+      out.push({ el, kind });
+    };
+    this.root.querySelectorAll(
+      ".canvas-node.is-text, .canvas-node[data-intuition-plain], .canvas-node[data-intuition-text-align]"
+    ).forEach((el) => push(el, "text"));
+    this.root.querySelectorAll(".canvas-node").forEach((el) => {
+      if (seen.has(el) || el.classList.contains("is-group")) return;
+      const hasImg = !!el.querySelector("img, .media-embed, .image-embed");
+      const hasText = !!el.querySelector(
+        ".markdown-preview-view, .markdown-source-view, .cm-editor, .cm-content"
+      ) || el.classList.contains("is-text");
+      if (hasText && !hasImg) push(el, "text");
+      else if (hasImg) push(el, "media");
+    });
+    return out;
+  }
+  tick(clientX, clientY) {
+    if (!this.root || !this.enabled) return;
+    const zoom = this.liveZoom();
+    if (this.strength <= 0.01 && this.textStrength <= 0.01) {
+      this.clearAllEffects();
+      return;
+    }
+    if (this.dragging || this.getSuspended() || this.getSelectionCount() > 1 || this.root.classList.contains("is-dragging") || this.root.classList.contains("intuition-canvas-panning") || this.root.classList.contains("intuition-canvas-zoom-settling") || this.root.querySelector(".canvas-node.is-dragging, .canvas-node.is-resizing")) {
+      this.clearAllEffects();
+      return;
+    }
+    const cards = this.getCards();
+    const nearPx = Math.max(56, NEAR_PX * Math.min(1, zoom / 0.9));
+    const maxTilts = maxMediaTiltsForZoom(zoom);
+    const hits = [];
+    const keep = /* @__PURE__ */ new Set();
+    for (const card of cards) {
+      const { el: node, kind } = card;
+      const isSelected = this.isNodeSelected(node);
+      if (kind === "text") {
+        if (!isSelected && this.textStrength > 0.01 && this.isPointerOverTextGlyphs(node, clientX, clientY)) {
+          this.paintTextGlow(node);
+        } else {
+          this.resetTextGlow(node);
+        }
+        continue;
+      }
+      if (isSelected || node.dataset.intuitionNoTilt === "1") {
+        this.disableTiltForNode(node);
+        continue;
+      }
+      const localMul = readTiltStrengthMul(node);
+      const cardStrength = this.strength * localMul;
+      if (cardStrength <= 0.01) {
+        const c = node.querySelector(
+          ".canvas-node-container"
+        );
+        if (c) this.resetCard(c);
+        continue;
+      }
+      const container = node.querySelector(".canvas-node-container") ?? node;
+      const rect = container.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) continue;
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dist = distToRect(clientX, clientY, rect);
+      const reach = Math.max(nearPx, Math.max(rect.width, rect.height) * 0.35);
+      const influence = 1 - Math.min(1, dist / reach);
+      if (influence <= 0.02) continue;
+      const nx = Math.max(
+        -1,
+        Math.min(1, (clientX - cx) / Math.max(8, rect.width / 2))
+      );
+      const ny = Math.max(
+        -1,
+        Math.min(1, (clientY - cy) / Math.max(8, rect.height / 2))
+      );
+      hits.push({ container, influence, nx, ny, cardStrength });
+    }
+    hits.sort((a, b) => b.influence - a.influence);
+    const winners = Number.isFinite(maxTilts) ? hits.slice(0, maxTilts) : hits;
+    for (const hit of winners) keep.add(hit.container);
+    for (const card of cards) {
+      if (card.kind !== "media") continue;
+      const container = card.el.querySelector(".canvas-node-container") ?? card.el;
+      if (!keep.has(container)) this.resetCard(container);
+    }
+    for (const hit of winners) {
+      const maxTilt = MAX_TILT_DEG * hit.cardStrength;
+      const rotY = hit.nx * maxTilt * hit.influence;
+      const rotX = -hit.ny * maxTilt * hit.influence;
+      hit.container.style.transition = "none";
+      hit.container.style.transform = `perspective(900px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg)`;
+      hit.container.setAttribute(TILTING_ATTR, "1");
+      if (this.glareEnabled) {
+        this.paintGlare(
+          hit.container,
+          hit.nx,
+          hit.ny,
+          hit.influence,
+          hit.cardStrength
+        );
+      }
+    }
+  }
+  /** True only when pointer is over glyph hosts — not empty card padding. */
+  isPointerOverTextGlyphs(node, clientX, clientY) {
+    const stack = document.elementsFromPoint(clientX, clientY);
+    for (const el of stack) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (!node.contains(el)) continue;
+      if (el.classList.contains("canvas-node") || el.classList.contains("canvas-node-container") || el.classList.contains("canvas-node-content") || el.classList.contains("markdown-source-view") || el.classList.contains("cm-editor") || el.classList.contains("cm-scroller") || el.classList.contains("cm-contentContainer") || el.classList.contains("markdown-preview-sizer")) {
+        continue;
+      }
+      if (el.closest(
+        ".canvas-node-resizer, .canvas-node-connection-point, .canvas-node-label"
+      )) {
+        continue;
+      }
+      if (el.closest(
+        ".markdown-preview-view, .cm-content, .cm-line, .cm-widget"
+      ) || el.matches(
+        "p, span, a, li, h1, h2, h3, h4, h5, h6, strong, em, code, .cm-line, .cm-content"
+      )) {
+        return true;
+      }
+    }
+    return false;
+  }
+  paintTextGlow(node) {
+    if (this.textStrength <= 0.01) {
+      this.resetTextGlow(node);
+      return;
+    }
+    const s = this.textStrength * 0.9;
+    const accent = getComputedStyle(document.body).getPropertyValue("--interactive-accent").trim() || "#7a6bb5";
+    const aNear = colorToRgba(accent, 0.42 * s);
+    const aFar = colorToRgba(accent, 0.2 * s);
+    const bNear = (4 + 12 * s).toFixed(1);
+    const bFar = (12 + 28 * s).toFixed(1);
+    const bright = (1 + 0.05 * s).toFixed(3);
+    const targets = collectTextGlowTargets(node);
+    if (targets.length === 0) return;
+    node.setAttribute(TEXT_GLOW_ATTR, "1");
+    targets.forEach((el) => {
+      const prev = this.textGlowFadeTimers.get(el);
+      if (prev) {
+        window.clearTimeout(prev);
+        this.textGlowFadeTimers.delete(el);
+      }
+      el.style.setProperty("transition", "filter 0.18s ease-out", "important");
+      el.style.setProperty(
+        "filter",
+        `brightness(${bright}) drop-shadow(0 0 ${bNear}px ${aNear}) drop-shadow(0 0 ${bFar}px ${aFar})`,
+        "important"
+      );
+      el.setAttribute(FILTER_ATTR, "1");
+    });
+  }
+  clearGlowFilter(el) {
+    el.style.removeProperty("filter");
+    el.style.removeProperty("transition");
+    el.removeAttribute(FILTER_ATTR);
+  }
+  resetTextGlow(node) {
+    const targets = collectTextGlowTargets(node);
+    if (targets.length === 0 && !node.hasAttribute(TEXT_GLOW_ATTR)) return;
+    node.removeAttribute(TEXT_GLOW_ATTR);
+    targets.forEach((el) => {
+      const prev = this.textGlowFadeTimers.get(el);
+      if (prev) window.clearTimeout(prev);
+      el.style.setProperty(
+        "transition",
+        "filter 0.48s ease-in-out",
+        "important"
+      );
+      el.style.setProperty(
+        "filter",
+        "brightness(1) drop-shadow(0 0 0px transparent) drop-shadow(0 0 0px transparent)",
+        "important"
+      );
+      const id = window.setTimeout(() => {
+        this.clearGlowFilter(el);
+        this.textGlowFadeTimers.delete(el);
+      }, 500);
+      this.textGlowFadeTimers.set(el, id);
+    });
+  }
+  paintGlare(container, nx, ny, influence, cardStrength) {
+    let glare = container.querySelector(`.${GLARE_CLS}`);
+    if (!glare) {
+      glare = document.createElement("div");
+      glare.className = GLARE_CLS;
+      glare.setAttribute("aria-hidden", "true");
+      container.appendChild(glare);
+    }
+    const px = 50 + nx * 35;
+    const py = 50 + ny * 35;
+    const base = (0.12 + influence * 0.38) * cardStrength;
+    glare.style.opacity = String(base);
+    glare.style.background = `radial-gradient(
+			circle at ${px.toFixed(1)}% ${py.toFixed(1)}%,
+			rgba(255, 255, 255, 0.45) 0%,
+			rgba(255, 255, 255, 0.12) 28%,
+			transparent 58%
+		)`;
+  }
+  resetCard(container) {
+    if (!container.hasAttribute(TILTING_ATTR)) return;
+    container.style.transition = "transform 0.28s ease-out";
+    container.style.removeProperty("transform");
+    container.removeAttribute(TILTING_ATTR);
+    const glare = container.querySelector(`.${GLARE_CLS}`);
+    if (glare) glare.style.opacity = "0";
+  }
+  /** @deprecated alias — prefer clearAllEffects */
+  clearAllTilts() {
+    this.clearAllEffects();
+  }
+  clearAllEffects() {
+    const scope = this.root ?? document;
+    scope.querySelectorAll(`.${GLARE_CLS}`).forEach((el) => {
+      el.style.opacity = "0";
+    });
+    scope.querySelectorAll(`[${TILTING_ATTR}]`).forEach((el) => {
+      el.style.transition = "transform 0.28s ease-out";
+      el.style.removeProperty("transform");
+      el.removeAttribute(TILTING_ATTR);
+    });
+    scope.querySelectorAll(".intuition-vibe-tilt-plane").forEach((plane) => {
+      const parent = plane.parentElement;
+      if (!parent) {
+        plane.remove();
+        return;
+      }
+      while (plane.firstChild) parent.insertBefore(plane.firstChild, plane);
+      plane.remove();
+    });
+    scope.querySelectorAll(`[${TEXT_GLOW_ATTR}]`).forEach((el) => {
+      this.resetTextGlow(el);
+    });
+    scope.querySelectorAll(`[${FILTER_ATTR}]`).forEach((el) => {
+      el.style.removeProperty("filter");
+      el.style.removeProperty("transition");
+      el.removeAttribute(FILTER_ATTR);
+    });
+    scope.querySelectorAll(
+      ".intuition-vibe-shine-layer, .intuition-vibe-text-shine"
+    ).forEach((el) => el.remove());
+  }
+};
+function distToRect(x, y, r) {
+  const dx = Math.max(r.left - x, 0, x - r.right);
+  const dy = Math.max(r.top - y, 0, y - r.bottom);
+  return Math.hypot(dx, dy);
+}
+function readTiltStrengthMul(node) {
+  const raw = node.dataset.intuitionTiltStrength;
+  if (raw == null || raw === "") return 1;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(1, Math.max(0, n / 100));
+}
+function colorToRgba(color, alpha) {
+  const a = Math.min(1, Math.max(0, alpha));
+  const hex = color.trim();
+  if (/^#[0-9a-f]{3}$/i.test(hex)) {
+    const r = parseInt(hex[1] + hex[1], 16);
+    const g = parseInt(hex[2] + hex[2], 16);
+    const b = parseInt(hex[3] + hex[3], 16);
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+  if (/^#[0-9a-f]{6}$/i.test(hex)) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+  const m = color.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
+  if (m) return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${a})`;
+  return `rgba(122, 107, 181, ${a})`;
+}
+function collectTextGlowTargets(node) {
+  const out = [];
+  const preview = node.querySelector(
+    ".markdown-preview-view"
+  );
+  const cm = node.querySelector(".cm-content");
+  if (preview) out.push(preview);
+  if (cm) out.push(cm);
+  if (out.length === 0) {
+    const content = node.querySelector(
+      ".canvas-node-content"
+    );
+    if (content) out.push(content);
+  }
+  return out;
+}
+
 // fpsOverlay.ts
 var CLS = "intuition-canvas-fps";
 var ATTR = "data-intuition-fps";
@@ -3955,7 +4534,7 @@ var FpsOverlay = class {
 };
 
 // stickyAudioPlayer.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var ATTR2 = "data-intuition-sticky-audio";
 var AUDIO_ATTR = "data-intuition-sticky-audio-el";
 var DEFAULT_VOLUME = 80;
@@ -4005,7 +4584,7 @@ var StickyAudioPlayer = class {
   setOnLoopChange(fn) {
     this.onLoopChange = fn;
   }
-  attach(host, canvasRoot) {
+  attach(host, canvasRoot2) {
     if (this.el?.isConnected && this.listenRoot === host) {
       if (!this.el.isConnected) host.appendChild(this.el);
       this.ensureAura();
@@ -4024,7 +4603,7 @@ var StickyAudioPlayer = class {
     playBtn.type = "button";
     playBtn.className = "clickable-icon intuition-sticky-audio__play";
     playBtn.setAttribute("aria-label", "\u041F\u0430\u0443\u0437\u0430");
-    (0, import_obsidian4.setIcon)(playBtn, "pause");
+    (0, import_obsidian5.setIcon)(playBtn, "pause");
     playBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -4073,7 +4652,7 @@ var StickyAudioPlayer = class {
     volBtn.type = "button";
     volBtn.className = "clickable-icon intuition-sticky-audio__vol-icon";
     volBtn.setAttribute("aria-label", "\u0413\u0440\u043E\u043C\u043A\u043E\u0441\u0442\u044C");
-    (0, import_obsidian4.setIcon)(volBtn, "volume-2");
+    (0, import_obsidian5.setIcon)(volBtn, "volume-2");
     volBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -4104,7 +4683,7 @@ var StickyAudioPlayer = class {
     repeatBtn.className = "clickable-icon intuition-sticky-audio__repeat";
     repeatBtn.setAttribute("aria-label", "\u041F\u043E\u0432\u0442\u043E\u0440 \u0442\u0440\u0435\u043A\u0430");
     repeatBtn.setAttribute("aria-pressed", "false");
-    (0, import_obsidian4.setIcon)(repeatBtn, "repeat");
+    (0, import_obsidian5.setIcon)(repeatBtn, "repeat");
     repeatBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -4115,7 +4694,7 @@ var StickyAudioPlayer = class {
     closeBtn.type = "button";
     closeBtn.className = "clickable-icon intuition-sticky-audio__close";
     closeBtn.setAttribute("aria-label", "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u043F\u043B\u0435\u0435\u0440");
-    (0, import_obsidian4.setIcon)(closeBtn, "x");
+    (0, import_obsidian5.setIcon)(closeBtn, "x");
     closeBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -4145,7 +4724,7 @@ var StickyAudioPlayer = class {
     this.volumeValue = volumeValue;
     this.repeatBtn = repeatBtn;
     this.listenRoot = host;
-    this.canvasRoot = canvasRoot;
+    this.canvasRoot = canvasRoot2;
     this.volIconBtn = volBtn;
     this.onTimeUpdate = () => this.syncProgress();
     this.onEnded = () => {
@@ -4324,12 +4903,12 @@ var StickyAudioPlayer = class {
   setPlayingUi(playing) {
     if (!this.playBtn) return;
     this.playBtn.setAttribute("aria-label", playing ? "\u041F\u0430\u0443\u0437\u0430" : "\u0418\u0433\u0440\u0430\u0442\u044C");
-    (0, import_obsidian4.setIcon)(this.playBtn, playing ? "pause" : "play");
+    (0, import_obsidian5.setIcon)(this.playBtn, playing ? "pause" : "play");
   }
   syncVolumeIcon() {
     if (!this.volIconBtn) return;
     const icon = this.volumePct <= 0 ? "volume-x" : this.volumePct < 40 ? "volume-1" : "volume-2";
-    (0, import_obsidian4.setIcon)(this.volIconBtn, icon);
+    (0, import_obsidian5.setIcon)(this.volIconBtn, icon);
   }
   syncRepeatUi() {
     if (!this.repeatBtn) return;
@@ -5486,6 +6065,563 @@ var PhotoPresentation = class {
   }
 };
 
+// pluginUtils.ts
+function leafId(leaf) {
+  return leaf.id ?? String(leaf);
+}
+function canvasRoot(view) {
+  return view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
+}
+function toggleCanvasFxClass(view, className, on) {
+  const root = canvasRoot(view);
+  root.classList.toggle(className, on);
+  view.containerEl.classList.toggle(className, on);
+  view.canvas?.canvasEl?.classList.toggle(className, on);
+}
+function createDebouncedSave(save, ms = 200) {
+  let timer = 0;
+  return {
+    schedule() {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = 0;
+        void save();
+      }, ms);
+    },
+    cancel() {
+      if (timer) {
+        window.clearTimeout(timer);
+        timer = 0;
+      }
+    }
+  };
+}
+
+// zoomPanFx.ts
+var FAR_ZOOM_CLASS = "intuition-canvas-far-zoom";
+var FAR_ZOOM_THRESHOLD = 0.18;
+var ZOOM_HOOK_ATTR = "data-intuition-zoom-fx";
+var PANNING_CLASS = "intuition-canvas-panning";
+var ZOOM_SETTLING_CLASS = "intuition-canvas-zoom-settling";
+var SHARP_ZOOM_REL = 0.1;
+var ZoomPanFxController = class {
+  constructor(deps) {
+    this.deps = deps;
+    this.zoomFarByLeaf = /* @__PURE__ */ new Map();
+    this.patchedCanvasViewport = /* @__PURE__ */ new WeakSet();
+    this.lastViewportByLeaf = /* @__PURE__ */ new Map();
+    this.panIdleTimers = /* @__PURE__ */ new Map();
+    this.zoomIdleTimers = /* @__PURE__ */ new Map();
+    this.auraRestartTimers = /* @__PURE__ */ new Map();
+    /** Last sane zoom per canvas — rejects float epsilons (~1e-16) that flicker HUD to 0%. */
+    this.lastGoodZoomByCanvas = /* @__PURE__ */ new WeakMap();
+  }
+  install(leaf) {
+    const view = leaf.view;
+    const root = canvasRoot(view);
+    this.patchCanvasViewportHook(leaf);
+    if (root.getAttribute(ZOOM_HOOK_ATTR) === "1") {
+      this.syncZoomFx(leaf);
+      return;
+    }
+    root.setAttribute(ZOOM_HOOK_ATTR, "1");
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        this.syncZoomFx(leaf);
+      });
+    };
+    const endPan = () => this.setPanning(leaf, false);
+    this.deps.registerDomEvent(root, "wheel", schedule, { passive: true });
+    this.deps.registerDomEvent(
+      root,
+      "pointerup",
+      () => {
+        schedule();
+        endPan();
+      },
+      { passive: true }
+    );
+    this.deps.registerDomEvent(window, "pointerup", endPan);
+    this.deps.registerDomEvent(window, "pointercancel", endPan);
+    this.syncZoomFx(leaf);
+  }
+  readZoom(view) {
+    return this.readCanvasZoom(view);
+  }
+  destroy() {
+    for (const t of this.panIdleTimers.values()) window.clearTimeout(t);
+    this.panIdleTimers.clear();
+    for (const t of this.zoomIdleTimers.values()) window.clearTimeout(t);
+    this.zoomIdleTimers.clear();
+    for (const t of this.auraRestartTimers.values()) window.clearTimeout(t);
+    this.auraRestartTimers.clear();
+  }
+  /** Obsidian fires markViewportChanged on every zoom/pan — most reliable hook. */
+  patchCanvasViewportHook(leaf) {
+    const canvas = leaf.view.canvas;
+    if (!canvas || this.patchedCanvasViewport.has(canvas)) return;
+    this.patchedCanvasViewport.add(canvas);
+    const c = canvas;
+    const schedule = () => {
+      window.requestAnimationFrame(() => this.syncZoomFx(leaf));
+    };
+    if (typeof c.markViewportChanged === "function") {
+      const orig = c.markViewportChanged.bind(c);
+      c.markViewportChanged = () => {
+        orig();
+        schedule();
+      };
+    }
+    if (typeof c.setViewport === "function") {
+      const orig = c.setViewport.bind(c);
+      c.setViewport = (tx, ty, tZoom) => {
+        orig(tx, ty, tZoom);
+        schedule();
+      };
+    }
+    if (typeof c.setDragging === "function") {
+      const orig = c.setDragging.bind(c);
+      c.setDragging = (dragging) => {
+        orig(dragging);
+        this.setPanning(leaf, !!dragging);
+      };
+    }
+  }
+  /** Continuous pan (e.g. isDragging). Idle-off via setPanning(leaf, false). */
+  setPanning(leaf, on) {
+    const id = leafId(leaf);
+    const view = leaf.view;
+    const root = canvasRoot(view);
+    const idle = this.panIdleTimers.get(id);
+    if (idle) {
+      window.clearTimeout(idle);
+      this.panIdleTimers.delete(id);
+    }
+    const apply = (active) => {
+      const was = root.classList.contains(PANNING_CLASS);
+      toggleCanvasFxClass(view, PANNING_CLASS, active);
+      this.deps.getSparkles(id)?.setPanning(active);
+      if (active && !was) {
+        this.deps.getTilt(id)?.clearAllEffects();
+      }
+    };
+    if (on) {
+      apply(true);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      this.panIdleTimers.delete(id);
+      if (view.canvas?.isDragging) return;
+      apply(false);
+    }, 80);
+    this.panIdleTimers.set(id, t);
+  }
+  /** Brief pan pulse (viewport moved without zoom). */
+  pulsePanning(leaf) {
+    this.setPanning(leaf, true);
+    this.setPanning(leaf, false);
+  }
+  /** Brief zoom-settling pulse. */
+  pulseSettling(leaf) {
+    const id = leafId(leaf);
+    const view = leaf.view;
+    const root = canvasRoot(view);
+    const idle = this.zoomIdleTimers.get(id);
+    if (idle) {
+      window.clearTimeout(idle);
+      this.zoomIdleTimers.delete(id);
+    }
+    const was = root.classList.contains(ZOOM_SETTLING_CLASS);
+    toggleCanvasFxClass(view, ZOOM_SETTLING_CLASS, true);
+    if (!was) {
+      this.deps.getTilt(id)?.clearAllEffects();
+    }
+    const t = window.setTimeout(() => {
+      this.zoomIdleTimers.delete(id);
+      toggleCanvasFxClass(view, ZOOM_SETTLING_CLASS, false);
+    }, 120);
+    this.zoomIdleTimers.set(id, t);
+  }
+  syncZoomFx(leaf) {
+    const view = leaf.view;
+    const id = leafId(leaf);
+    const zoom = this.readCanvasZoom(view);
+    const far = zoom > 0 && zoom < FAR_ZOOM_THRESHOLD;
+    const wasFar = this.zoomFarByLeaf.get(id) ?? false;
+    toggleCanvasFxClass(view, FAR_ZOOM_CLASS, far);
+    this.zoomFarByLeaf.set(id, far);
+    this.deps.getSparkles(id)?.setZoom(zoom);
+    this.deps.getTilt(id)?.setZoom(zoom);
+    if (wasFar && !far) {
+      this.queueAuraRestart(leaf);
+    }
+    const canvas = view.canvas;
+    const x = canvas?.tx ?? canvas?.x ?? 0;
+    const y = canvas?.ty ?? canvas?.y ?? 0;
+    const prev = this.lastViewportByLeaf.get(id);
+    this.lastViewportByLeaf.set(id, { x, y, zoom });
+    if (prev) {
+      const moved = Math.abs(prev.x - x) > 0.5 || Math.abs(prev.y - y) > 0.5;
+      const zoomed = Math.abs(prev.zoom - zoom) > 1e-3;
+      if (zoomed) {
+        this.pulseSettling(leaf);
+        const rel = Math.abs(zoom - prev.zoom) / Math.max(prev.zoom, 1e-3);
+        if (rel >= SHARP_ZOOM_REL && !far) {
+          this.queueAuraRestart(leaf);
+        }
+      }
+      if (moved && !zoomed) {
+        this.pulsePanning(leaf);
+      }
+    }
+    if (canvas?.isDragging) this.setPanning(leaf, true);
+  }
+  /**
+   * Debounced CSS animation restart (auras stay visible).
+   * Skips while far-zoom lite CSS is active.
+   */
+  queueAuraRestart(leaf) {
+    const id = leafId(leaf);
+    const view = leaf.view;
+    const prev = this.auraRestartTimers.get(id);
+    if (prev) window.clearTimeout(prev);
+    const t = window.setTimeout(() => {
+      this.auraRestartTimers.delete(id);
+      if (this.zoomFarByLeaf.get(id)) return;
+      this.restartAuraAnimations(view);
+    }, 80);
+    this.auraRestartTimers.set(id, t);
+  }
+  /** Re-enable breathe/drift after far-zoom or a sharp near-zoom jump. */
+  restartAuraAnimations(view) {
+    const root = canvasRoot(view);
+    if (root.classList.contains(FAR_ZOOM_CLASS) || view.containerEl.classList.contains(FAR_ZOOM_CLASS)) {
+      return;
+    }
+    const auras = view.containerEl.querySelectorAll(
+      ".intuition-image-aura, .intuition-image-aura__blob"
+    );
+    if (!auras.length) return;
+    auras.forEach((el) => {
+      el.style.setProperty("animation", "none");
+    });
+    void view.containerEl.offsetWidth;
+    requestAnimationFrame(() => {
+      auras.forEach((el) => {
+        el.style.removeProperty("animation");
+      });
+    });
+  }
+  readCanvasZoom(view) {
+    const canvas = view.canvas;
+    const fromZoom = canvas?.zoom;
+    const fromTarget = canvas?.tZoom;
+    const lastGood = (canvas ? this.lastGoodZoomByCanvas.get(canvas) : void 0) ?? 1;
+    const MIN_ZOOM = 0.01;
+    const isSane = (z) => typeof z === "number" && Number.isFinite(z) && z >= MIN_ZOOM;
+    let usedFallback = true;
+    let result = lastGood;
+    if (isSane(fromZoom)) {
+      result = fromZoom;
+      usedFallback = false;
+    } else if (isSane(fromTarget)) {
+      result = fromTarget;
+      usedFallback = false;
+    } else {
+      const canvasEl = canvas?.canvasEl ?? view.containerEl.querySelector(".canvas");
+      if (canvasEl) {
+        const scale = readElementScale(canvasEl);
+        if (isSane(scale)) {
+          result = scale;
+          usedFallback = false;
+        }
+      }
+      if (usedFallback) {
+        const hosts = [
+          canvas?.wrapperEl,
+          view.containerEl.querySelector(".canvas-wrapper")
+        ].filter(Boolean);
+        for (const el of hosts) {
+          const scale = readElementScale(el);
+          if (isSane(scale)) {
+            result = scale;
+            usedFallback = false;
+            break;
+          }
+        }
+      }
+    }
+    if (canvas && isSane(result)) {
+      this.lastGoodZoomByCanvas.set(canvas, result);
+    }
+    return result;
+  }
+};
+function readElementScale(el) {
+  const t = getComputedStyle(el).transform;
+  if (!t || t === "none") return 0;
+  const m2 = t.match(/matrix3d\(([^)]+)\)/);
+  if (m2) {
+    const a2 = Number.parseFloat(m2[1].split(",")[0] ?? "");
+    if (Number.isFinite(a2) && Math.abs(a2) > 1e-3) return Math.abs(a2);
+  }
+  const m = t.match(/matrix\(([^)]+)\)/);
+  if (!m) return 0;
+  const a = Number.parseFloat(m[1].split(",")[0] ?? "");
+  if (!Number.isFinite(a) || Math.abs(a) <= 1e-3) return 0;
+  return Math.abs(a);
+}
+
+// toolbarToggles.ts
+var import_obsidian6 = require("obsidian");
+function syncControlButton(el, opts) {
+  if (!el) return;
+  const button = el instanceof HTMLButtonElement ? el : el.querySelector("button");
+  if (!button) return;
+  if (opts.active !== void 0) {
+    button.classList.toggle("is-active", opts.active);
+  }
+  (0, import_obsidian6.setIcon)(button, opts.iconName);
+  (0, import_obsidian6.setTooltip)(button, opts.title, { placement: "left" });
+  button.setAttribute("aria-label", opts.title);
+}
+function injectControlButton(controls, opts) {
+  const existing = controls.querySelector(`[${opts.attr}]`);
+  if (existing) {
+    const btn = existing instanceof HTMLButtonElement ? existing : existing.querySelector("button");
+    if (btn instanceof HTMLButtonElement) {
+      opts.sync?.(btn);
+      return btn;
+    }
+    return null;
+  }
+  const group = document.createElement("div");
+  group.className = "canvas-control-group";
+  group.setAttribute(opts.attr, "1");
+  const button = document.createElement("button");
+  button.className = opts.buttonClass ?? "clickable-icon intuition-canvas-toggle";
+  button.type = "button";
+  opts.sync?.(button);
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    opts.onClick();
+  });
+  group.appendChild(button);
+  controls.appendChild(group);
+  return button;
+}
+function injectCardMenuButton(menu, opts) {
+  if (menu.querySelector(`[${opts.attr}]`)) return null;
+  const btn = document.createElement("div");
+  btn.className = "canvas-card-menu-button";
+  btn.setAttribute(opts.attr, "1");
+  btn.setAttribute("aria-label", opts.ariaLabel);
+  (0, import_obsidian6.setIcon)(btn, opts.iconName);
+  (0, import_obsidian6.setTooltip)(btn, opts.tooltip ?? opts.ariaLabel, { placement: "top" });
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    opts.onClick();
+  });
+  menu.appendChild(btn);
+  return btn;
+}
+
+// imageResize.ts
+var DOM_HOOK_ATTR = "data-intuition-canvas-resize-hook";
+var ImageResizeController = class {
+  constructor(deps) {
+    this.deps = deps;
+    this.aspectResizeActive = false;
+  }
+  get isActive() {
+    return this.aspectResizeActive;
+  }
+  install(leaf) {
+    const view = leaf.view;
+    const root = canvasRoot(view);
+    if (root.getAttribute(DOM_HOOK_ATTR) === "1") return;
+    root.setAttribute(DOM_HOOK_ATTR, "1");
+    this.deps.registerDomEvent(root, "pointerdown", (event) => {
+      this.onCanvasPointerDown(view, event);
+    });
+  }
+  getSelectedImageNodes(view) {
+    const canvas = view.canvas;
+    if (!canvas?.nodes) return [];
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    const push = (node) => {
+      if (!isImageNode(node) || seen.has(node.id)) return;
+      seen.add(node.id);
+      out.push(node);
+    };
+    if (canvas.selection) {
+      for (const item of canvas.selection) push(item);
+    }
+    if (out.length === 0) {
+      for (const node of canvas.nodes.values()) {
+        if (node.nodeEl?.classList.contains("is-selected")) push(node);
+      }
+    }
+    return out;
+  }
+  onCanvasPointerDown(view, event) {
+    if (this.aspectResizeActive) return;
+    const cursorInfo = findResizeCursor(event);
+    if (!cursorInfo) return;
+    const node = this.getSelectedImageNode(view);
+    if (!node || node.width <= 0 || node.height <= 0) return;
+    if (cursorInfo.kind === "side-h") {
+      this.startSideFreeStretch(node, "horizontal");
+    } else if (cursorInfo.kind === "side-v") {
+      this.startSideFreeStretch(node, "vertical");
+    } else {
+      this.startCornerAspectLock(node);
+    }
+  }
+  getSelectedImageNode(view) {
+    return this.getSelectedImageNodes(view)[0] ?? null;
+  }
+  startSideFreeStretch(node, axis) {
+    if (this.aspectResizeActive) return;
+    this.aspectResizeActive = true;
+    const start = {
+      x: node.x,
+      y: node.y,
+      w: node.width,
+      h: node.height
+    };
+    const enforce = () => {
+      if (axis === "horizontal") {
+        node.height = start.h;
+        node.y = start.y;
+      } else {
+        node.width = start.w;
+        node.x = start.x;
+      }
+      node.render?.();
+    };
+    let raf = 0;
+    const tick = () => {
+      enforce();
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    const onMove = () => enforce();
+    window.addEventListener("pointermove", onMove);
+    const stop = () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove);
+      enforce();
+      this.aspectResizeActive = false;
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      node.canvas?.requestSave?.();
+    };
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }
+  startCornerAspectLock(node) {
+    if (this.aspectResizeActive) return;
+    this.aspectResizeActive = true;
+    const start = {
+      x: node.x,
+      y: node.y,
+      w: node.width,
+      h: node.height
+    };
+    const ratio = start.w / start.h;
+    const tickApply = () => {
+      const leftMoved = Math.abs(node.x - start.x) > 1;
+      const topMoved = Math.abs(node.y - start.y) > 1;
+      applyAspectLock(node, start, ratio, leftMoved, topMoved);
+    };
+    let raf = 0;
+    const tick = () => {
+      tickApply();
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    const onMove = () => tickApply();
+    window.addEventListener("pointermove", onMove);
+    const stop = () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove);
+      tickApply();
+      this.aspectResizeActive = false;
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      node.canvas?.requestSave?.();
+    };
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }
+};
+function findResizeCursor(event) {
+  let el = event.target;
+  for (let i = 0; i < 6 && el; i++) {
+    const cursor = window.getComputedStyle(el).cursor.toLowerCase();
+    const kind = classifyCursor(cursor);
+    if (kind) return { kind, cursor };
+    const cls = el.className?.toString?.().toLowerCase?.() ?? "";
+    if (/resiz/.test(cls)) {
+      if (/left|right|e-|w-|east|west/.test(cls) && !/top|bottom|n-|s-/.test(cls)) {
+        return { kind: "side-h", cursor: cls };
+      }
+      if (/top|bottom|n-|s-|north|south/.test(cls) && !/left|right|e-|w-/.test(cls)) {
+        return { kind: "side-v", cursor: cls };
+      }
+      if (/corner|nw|ne|sw|se/.test(cls)) {
+        return { kind: "corner", cursor: cls };
+      }
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+function classifyCursor(cursor) {
+  if (!cursor || cursor === "auto" || cursor === "default") return null;
+  if (cursor === "ew-resize" || cursor === "e-resize" || cursor === "w-resize" || cursor === "col-resize") {
+    return "side-h";
+  }
+  if (cursor === "ns-resize" || cursor === "n-resize" || cursor === "s-resize" || cursor === "row-resize") {
+    return "side-v";
+  }
+  if (cursor === "nwse-resize" || cursor === "nesw-resize" || cursor === "nw-resize" || cursor === "ne-resize" || cursor === "sw-resize" || cursor === "se-resize") {
+    return "corner";
+  }
+  if (cursor.includes("resize")) {
+    return "corner";
+  }
+  return null;
+}
+function applyAspectLock(node, start, ratio, movesLeft, movesTop) {
+  const rightEdge = movesLeft ? start.x + start.w : node.x + node.width;
+  const bottomEdge = movesTop ? start.y + start.h : node.y + node.height;
+  const heightFromWidth = node.width / ratio;
+  const widthFromHeight = node.height * ratio;
+  const widthIsPrimary = Math.abs(heightFromWidth - node.height) <= Math.abs(widthFromHeight - node.width);
+  let width;
+  let height;
+  if (widthIsPrimary) {
+    width = Math.max(20, node.width);
+    height = width / ratio;
+  } else {
+    height = Math.max(20, node.height);
+    width = height * ratio;
+  }
+  node.x = movesLeft ? rightEdge - width : start.x;
+  node.y = movesTop ? bottomEdge - height : start.y;
+  node.width = width;
+  node.height = height;
+  node.render?.();
+}
+
 // main.ts
 var CANVAS_VIEW_TYPE = "canvas";
 var BUTTON_ATTR = "data-intuition-canvas-labels-toggle";
@@ -5496,87 +6632,38 @@ var TEXT_BTN_ATTR = "data-intuition-canvas-add-text";
 var COLLAGE_BTN_ATTR = "data-intuition-canvas-collage";
 var HIDE_CLASS = "intuition-canvas-hide-image-labels";
 var HIDE_AURAS_CLASS = "intuition-canvas-hide-auras";
-var FAR_ZOOM_CLASS = "intuition-canvas-far-zoom";
-var FAR_ZOOM_THRESHOLD = 0.18;
-var ZOOM_HOOK_ATTR = "data-intuition-zoom-fx";
-var PANNING_CLASS = "intuition-canvas-panning";
-var ZOOM_SETTLING_CLASS = "intuition-canvas-zoom-settling";
-var SHARP_ZOOM_REL = 0.1;
-var DOM_HOOK_ATTR = "data-intuition-canvas-resize-hook";
 var TEXT_HOOK_ATTR = "data-intuition-canvas-text-hook";
-var DEFAULT_GLOBAL_AURA = {
-  enabled: true,
-  shimmer: true,
-  strength: 50,
-  size: 100
-};
-function normalizeGlobalAura(partial) {
-  const p = partial ?? {};
-  return {
-    enabled: p.enabled ?? DEFAULT_GLOBAL_AURA.enabled,
-    shimmer: p.shimmer ?? DEFAULT_GLOBAL_AURA.shimmer,
-    strength: Math.min(100, Math.max(0, Math.round(p.strength ?? DEFAULT_GLOBAL_AURA.strength))),
-    size: Math.min(200, Math.max(0, Math.round(p.size ?? DEFAULT_GLOBAL_AURA.size)))
-  };
-}
-var DEFAULT_SETTINGS = {
-  hideImageLabels: true,
-  hideAuras: false,
-  vibeMode: false,
-  vibeStrength: 40,
-  vibeTextStrength: 28,
-  vibeStrengthScale: 2,
-  vibeSparkleScale: 3,
-  vibeSparkles: { ...DEFAULT_SPARKLE_CONFIG },
-  globalAura: { ...DEFAULT_GLOBAL_AURA },
-  vibePanelSections: {
-    tilt: true,
-    sparkles: false,
-    auras: false
-  },
-  canvasChrome: {},
-  collageGap: 16,
-  collagePackAxis: "cols",
-  collageCount: COLLAGE_COUNT_DEFAULT,
-  presentation: { ...DEFAULT_PRESENTATION_SETTINGS },
-  stickyAudioVolume: 80,
-  stickyAudioLoop: false
-};
-var VIBE_STRENGTH_SCALE = 2;
-var VIBE_SPARKLE_SCALE = 3;
-var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
+var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
-    this.observers = [];
-    this.aspectResizeActive = false;
     this.textPanels = /* @__PURE__ */ new Map();
     this.imagePanels = /* @__PURE__ */ new Map();
     this.vibeControllers = /* @__PURE__ */ new Map();
     this.vibeSparkles = /* @__PURE__ */ new Map();
     this.vibePanels = /* @__PURE__ */ new Map();
-    this.collagePanels = /* @__PURE__ */ new Map();
     this.canvasPanels = /* @__PURE__ */ new Map();
     this.fpsOverlays = /* @__PURE__ */ new Map();
     this.stickyAudioPlayers = /* @__PURE__ */ new Map();
     this.photoPresentations = /* @__PURE__ */ new Map();
-    this.vibeStrengthSaveTimer = 0;
-    this.chromeSaveTimer = 0;
-    this.collageGapSaveTimer = 0;
-    this.presentationSaveTimer = 0;
+    this.vibeSettingsSave = createDebouncedSave(() => this.saveSettings());
+    this.chromeSettingsSave = createDebouncedSave(() => this.saveSettings());
+    this.collageSettingsSave = createDebouncedSave(() => this.saveSettings());
+    this.presentationSettingsSave = createDebouncedSave(
+      () => this.saveSettings()
+    );
     this.workspaceRefreshTimer = 0;
-    this.zoomFarByLeaf = /* @__PURE__ */ new Map();
-    this.patchedCanvasViewport = /* @__PURE__ */ new WeakSet();
-    this.lastViewportByLeaf = /* @__PURE__ */ new Map();
-    this.panIdleTimers = /* @__PURE__ */ new Map();
-    this.zoomIdleTimers = /* @__PURE__ */ new Map();
-    this.auraRestartTimers = /* @__PURE__ */ new Map();
-    /** Last sane zoom per canvas — rejects float epsilons (~1e-16) that flicker HUD to 0%. */
-    this.lastGoodZoomByCanvas = /* @__PURE__ */ new WeakMap();
+    this.zoomFx = new ZoomPanFxController({
+      registerDomEvent: this.registerDomEvent.bind(this),
+      getSparkles: (id) => this.vibeSparkles.get(id),
+      getTilt: (id) => this.vibeControllers.get(id)
+    });
+    this.imageResize = new ImageResizeController({
+      registerDomEvent: this.registerDomEvent.bind(this)
+    });
   }
   async onload() {
     await this.loadSettings();
-    this.injectFallbackStyle();
     this.applyLabelVisibility();
     this.applyAuraVisibility();
     this.registerEvent(
@@ -5667,7 +6754,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       checkCallback: (checking) => {
         const leaf = this.getActiveCanvasLeaf();
         if (!leaf) return false;
-        const id = leaf.id ?? String(leaf);
+        const id = leafId(leaf);
         const active = this.photoPresentations.get(id)?.isActive();
         if (checking) return !!active;
         this.photoPresentations.get(id)?.stop();
@@ -5676,7 +6763,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     });
   }
   onunload() {
-    this.clearObservers();
+    this.zoomFx.destroy();
     for (const panel of this.textPanels.values()) panel.el.remove();
     this.textPanels.clear();
     for (const panel of this.imagePanels.values()) panel.el.remove();
@@ -5685,10 +6772,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.vibeControllers.clear();
     for (const sparkles of this.vibeSparkles.values()) sparkles.destroy();
     this.vibeSparkles.clear();
-    for (const panel of this.vibePanels.values()) panel.remove();
+    for (const panel of this.vibePanels.values()) panel.destroy();
     this.vibePanels.clear();
-    for (const panel of this.collagePanels.values()) panel.remove();
-    this.collagePanels.clear();
     for (const panel of this.canvasPanels.values()) panel.el.remove();
     this.canvasPanels.clear();
     for (const fps of this.fpsOverlays.values()) fps.destroy();
@@ -5697,17 +6782,11 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.stickyAudioPlayers.clear();
     for (const present of this.photoPresentations.values()) present.destroy();
     this.photoPresentations.clear();
-    if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
-    if (this.chromeSaveTimer) window.clearTimeout(this.chromeSaveTimer);
-    if (this.collageGapSaveTimer) window.clearTimeout(this.collageGapSaveTimer);
-    if (this.presentationSaveTimer) window.clearTimeout(this.presentationSaveTimer);
+    this.vibeSettingsSave.cancel();
+    this.chromeSettingsSave.cancel();
+    this.collageSettingsSave.cancel();
+    this.presentationSettingsSave.cancel();
     if (this.workspaceRefreshTimer) window.clearTimeout(this.workspaceRefreshTimer);
-    for (const t of this.panIdleTimers.values()) window.clearTimeout(t);
-    this.panIdleTimers.clear();
-    for (const t of this.zoomIdleTimers.values()) window.clearTimeout(t);
-    this.zoomIdleTimers.clear();
-    for (const t of this.auraRestartTimers.values()) window.clearTimeout(t);
-    this.auraRestartTimers.clear();
     document.querySelectorAll(".intuition-vibe-sparkle").forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-vibe-sparkles-canvas]").forEach((el) => el.remove());
     document.querySelectorAll(".intuition-image-aura").forEach((el) => el.remove());
@@ -5719,7 +6798,8 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     document.querySelectorAll("[data-intuition-canvas-panel]").forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-photo-presentation]").forEach((el) => el.remove());
     document.querySelectorAll("[data-intuition-sticky-audio]").forEach((el) => el.remove());
-    document.getElementById("intuition-canvas-label-style")?.remove();
+    document.querySelectorAll("[data-intuition-vibe-panel]").forEach((el) => el.remove());
+    document.querySelectorAll("[data-intuition-collage-panel]").forEach((el) => el.remove());
     document.body.classList.remove(HIDE_CLASS);
     document.body.classList.remove(HIDE_AURAS_CLASS);
     document.body.classList.remove("intuition-canvas-vibe");
@@ -5765,109 +6845,9 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     document.querySelectorAll("[data-intuition-vibe-hook]").forEach((el) => el.removeAttribute("data-intuition-vibe-hook"));
     document.querySelectorAll(".intuition-plain-text").forEach((el) => el.classList.remove("intuition-plain-text"));
   }
-  injectFallbackStyle() {
-    if (document.getElementById("intuition-canvas-label-style")) return;
-    const style = document.createElement("style");
-    style.id = "intuition-canvas-label-style";
-    style.textContent = `
-			body.${HIDE_CLASS} .canvas-node-label,
-			.${HIDE_CLASS} .canvas-node-label {
-				display: none !important;
-				visibility: hidden !important;
-				opacity: 0 !important;
-				pointer-events: none !important;
-			}
-		`;
-    document.head.appendChild(style);
-  }
-  clearObservers() {
-    for (const observer of this.observers) observer.disconnect();
-    this.observers = [];
-  }
-  watchCanvasDom(root) {
-    if (root.dataset.intuitionCanvasWatching === "1") return;
-    root.dataset.intuitionCanvasWatching = "1";
-    const observer = new MutationObserver(() => {
-      if (this.settings.hideImageLabels) {
-        this.hideLabelsIn(root);
-      }
-    });
-    observer.observe(root, { childList: true, subtree: true });
-    this.observers.push(observer);
-  }
-  hideLabelsIn(root) {
-    root.querySelectorAll(".canvas-node-label").forEach((label) => {
-      label.style.setProperty("display", "none", "important");
-    });
-  }
   async loadSettings() {
-    const raw = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, raw);
-    if (!this.settings.canvasChrome) this.settings.canvasChrome = {};
-    const legacyAmount = typeof raw?.vibeSparkle === "number" ? raw.vibeSparkle : raw?.vibeSparkles?.amount;
-    const prevSparkleScale = raw?.vibeSparkleScale ?? 1;
-    const mergedSparkles = {
-      ...DEFAULT_SPARKLE_CONFIG,
-      ...raw?.vibeSparkles ?? {},
-      ...legacyAmount != null ? { amount: legacyAmount } : {}
-    };
-    this.settings.vibeSparkles = prevSparkleScale < VIBE_SPARKLE_SCALE ? migrateLegacySparkleConfig(mergedSparkles) : normalizeSparkleConfig(mergedSparkles);
-    this.settings.globalAura = normalizeGlobalAura(raw?.globalAura);
-    this.settings.presentation = normalizePresentationSettings(raw?.presentation);
-    this.settings.stickyAudioVolume = Math.min(
-      100,
-      Math.max(
-        0,
-        Math.round(
-          Number(
-            raw?.stickyAudioVolume ?? DEFAULT_SETTINGS.stickyAudioVolume
-          )
-        )
-      )
-    );
-    this.settings.stickyAudioLoop = !!(raw?.stickyAudioLoop ?? DEFAULT_SETTINGS.stickyAudioLoop);
-    this.settings.vibeTextStrength = this.clampVibeTextStrength(
-      raw?.vibeTextStrength ?? DEFAULT_SETTINGS.vibeTextStrength
-    );
-    this.settings.vibePanelSections = {
-      ...DEFAULT_SETTINGS.vibePanelSections,
-      ...raw?.vibePanelSections ?? {}
-    };
-    let migrated = false;
-    const prevTiltScale = this.settings.vibeStrengthScale ?? 1;
-    if (prevTiltScale < VIBE_STRENGTH_SCALE) {
-      const factor = prevTiltScale / VIBE_STRENGTH_SCALE;
-      this.settings.vibeStrength = this.clampVibeStrength(
-        this.settings.vibeStrength * factor
-      );
-      this.settings.vibeStrengthScale = VIBE_STRENGTH_SCALE;
-      migrated = true;
-    }
-    if (prevSparkleScale < VIBE_SPARKLE_SCALE) {
-      this.settings.vibeSparkleScale = VIBE_SPARKLE_SCALE;
-      migrated = true;
-    }
-    this.settings.vibeSparkle = this.settings.vibeSparkles.amount;
-    this.settings.collageGap = clampCollageGap(
-      this.settings.collageGap ?? DEFAULT_SETTINGS.collageGap
-    );
-    const rawAny = raw ?? {};
-    const hadLegacyCollage = "collageArrange" in rawAny || "collageCenterSize" in rawAny || "collageSizeMode" in rawAny || "collageFixedAxis" in rawAny || "collageFixedSize" in rawAny || !("collagePackAxis" in rawAny) && !("collageCount" in rawAny);
-    this.settings.collagePackAxis = normalizeCollagePackAxis(
-      rawAny.collagePackAxis ?? DEFAULT_SETTINGS.collagePackAxis
-    );
-    const packAxis = this.settings.collagePackAxis;
-    const legacyCount = typeof rawAny.collageCount === "number" ? rawAny.collageCount : packAxis === "rows" && typeof rawAny.collageRows === "number" ? rawAny.collageRows : typeof rawAny.collageCols === "number" ? rawAny.collageCols : DEFAULT_SETTINGS.collageCount;
-    this.settings.collageCount = clampCollageCount(legacyCount);
-    if (hadLegacyCollage) migrated = true;
-    const settingsBag = this.settings;
-    delete settingsBag.collageArrange;
-    delete settingsBag.collageCenterSize;
-    delete settingsBag.collageSizeMode;
-    delete settingsBag.collageFixedAxis;
-    delete settingsBag.collageFixedSize;
-    delete settingsBag.collageCols;
-    delete settingsBag.collageRows;
+    const { settings, migrated } = migrateSettings(await this.loadData());
+    this.settings = settings;
     if (migrated) await this.saveSettings();
   }
   async saveSettings() {
@@ -5886,7 +6866,6 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.applyAuraVisibility();
     this.refreshTextStyles();
     this.refreshImageStyles();
-    this.applyAllCanvasChrome();
   }
   getActiveCanvasLeaf() {
     const activeLeaf = this.app.workspace.activeLeaf;
@@ -5916,19 +6895,6 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       view.canvas?.wrapperEl?.classList.toggle(HIDE_CLASS, hide);
       view.canvas?.canvasEl?.classList.toggle(HIDE_CLASS, hide);
       root.querySelector(".canvas")?.classList.toggle(HIDE_CLASS, hide);
-      this.watchCanvasDom(root);
-      root.querySelectorAll(".canvas-node-label").forEach((label) => {
-        if (hide) label.style.setProperty("display", "none", "important");
-        else label.style.removeProperty("display");
-      });
-      const nodes = view.canvas?.nodes;
-      if (!nodes) continue;
-      for (const node of nodes.values()) {
-        const label = node.labelEl;
-        if (!label) continue;
-        if (hide) label.style.setProperty("display", "none", "important");
-        else label.style.removeProperty("display");
-      }
     }
   }
   async toggleHideImageLabels() {
@@ -5963,7 +6929,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     const sparkleCfg = normalizeSparkleConfig(this.settings.vibeSparkles);
     this.settings.vibeSparkles = sparkleCfg;
     for (const leaf of this.app.workspace.getLeavesOfType(CANVAS_VIEW_TYPE)) {
-      const id = leaf.id ?? String(leaf);
+      const id = leafId(leaf);
       const vibe = this.vibeControllers.get(id);
       vibe?.setStrength(strength);
       vibe?.setTextStrength(textStrength);
@@ -5976,12 +6942,10 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.syncAllVibeToggleButtons();
   }
   clampVibeStrength(value) {
-    if (!Number.isFinite(value)) return DEFAULT_SETTINGS.vibeStrength;
-    return Math.min(100, Math.max(0, Math.round(value)));
+    return clampPercent(value, DEFAULT_SETTINGS.vibeStrength);
   }
   clampVibeTextStrength(value) {
-    if (!Number.isFinite(value)) return DEFAULT_SETTINGS.vibeTextStrength;
-    return Math.min(100, Math.max(0, Math.round(value)));
+    return clampPercent(value, DEFAULT_SETTINGS.vibeTextStrength);
   }
   setVibeStrength(value, persist = true) {
     const strength = this.clampVibeStrength(value);
@@ -6008,7 +6972,6 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       ...this.settings.vibeSparkles,
       ...partial
     });
-    this.settings.vibeSparkle = this.settings.vibeSparkles.amount;
     for (const ctrl of this.vibeSparkles.values()) {
       ctrl.setConfig(this.settings.vibeSparkles);
     }
@@ -6020,13 +6983,12 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.settings.vibeSparkles = normalizeSparkleConfig({
       ...DEFAULT_SPARKLE_CONFIG
     });
-    this.settings.vibeSparkle = this.settings.vibeSparkles.amount;
     for (const ctrl of this.vibeSparkles.values()) {
       ctrl.setConfig(this.settings.vibeSparkles);
     }
     this.syncVibeSparkleControls();
     this.queueVibeSettingsSave();
-    new import_obsidian5.Notice("\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
+    new import_obsidian7.Notice("\u0411\u043B\u0435\u0441\u0442\u043A\u0438 \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
   }
   patchGlobalAura(partial, persist = true) {
     this.settings.globalAura = normalizeGlobalAura({
@@ -6045,7 +7007,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.syncGlobalAuraControls();
     this.applyGlobalAuraToAllImages(false);
     this.queueVibeSettingsSave();
-    new import_obsidian5.Notice("\u0410\u0443\u0440\u044B \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
+    new import_obsidian7.Notice("\u0410\u0443\u0440\u044B \u0441\u0431\u0440\u043E\u0448\u0435\u043D\u044B", 1200);
   }
   /** Clear the global CSS hide so painted DOM auras can actually show. */
   clearHideAurasGate() {
@@ -6080,24 +7042,20 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     }
     this.refreshImageStyles();
     if (showNotice) {
-      new import_obsidian5.Notice(
+      new import_obsidian7.Notice(
         count > 0 ? `\u0410\u0443\u0440\u044B \u043F\u0440\u0438\u043C\u0435\u043D\u0435\u043D\u044B (${count})` : "\u041D\u0435\u0442 \u043A\u0430\u0440\u0442\u0438\u043D\u043E\u043A \u043D\u0430 \u043A\u0430\u043D\u0432\u0430\u0441\u0435",
         1400
       );
     }
   }
   queueVibeSettingsSave() {
-    if (this.vibeStrengthSaveTimer) window.clearTimeout(this.vibeStrengthSaveTimer);
-    this.vibeStrengthSaveTimer = window.setTimeout(() => {
-      this.vibeStrengthSaveTimer = 0;
-      void this.saveSettings();
-    }, 200);
+    this.vibeSettingsSave.schedule();
   }
   async toggleVibeMode() {
     this.settings.vibeMode = !this.settings.vibeMode;
     await this.saveSettings();
     this.applyVibeMode();
-    new import_obsidian5.Notice(
+    new import_obsidian7.Notice(
       this.settings.vibeMode ? "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u043A\u0430\u0440\u0442\u043E\u0447\u0435\u043A" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D",
       1400
     );
@@ -6110,8 +7068,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       this.injectChromeToggle(leaf);
       this.injectAddTextButton(leaf);
       this.injectCollageButton(leaf);
-      this.ensureCollagePanel(leaf);
-      this.installDomResizeHook(leaf);
+      this.imageResize.install(leaf);
       this.ensureTextPanel(leaf);
       this.ensureImagePanel(leaf);
       this.ensureCanvasPanel(leaf);
@@ -6120,250 +7077,13 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       this.ensureVibeController(leaf);
       this.ensureFpsOverlay(leaf);
       this.ensureStickyAudioPlayer(leaf);
-      this.installZoomFxHook(leaf);
+      this.zoomFx.install(leaf);
     }
     this.applyVibeMode();
     this.applyAllCanvasChrome();
   }
-  /** Freeze heavy FX when zoomed far out (all photos in view → GPU thrash). */
-  installZoomFxHook(leaf) {
-    const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
-    this.patchCanvasViewportHook(leaf);
-    if (root.getAttribute(ZOOM_HOOK_ATTR) === "1") {
-      this.syncZoomFx(leaf);
-      return;
-    }
-    root.setAttribute(ZOOM_HOOK_ATTR, "1");
-    let raf = 0;
-    const schedule = () => {
-      if (raf) return;
-      raf = window.requestAnimationFrame(() => {
-        raf = 0;
-        this.syncZoomFx(leaf);
-      });
-    };
-    const endPan = () => this.setCanvasPanning(leaf, false);
-    this.registerDomEvent(root, "wheel", schedule, { passive: true });
-    this.registerDomEvent(root, "pointerup", () => {
-      schedule();
-      endPan();
-    }, { passive: true });
-    this.registerDomEvent(window, "pointerup", endPan);
-    this.registerDomEvent(window, "pointercancel", endPan);
-    this.syncZoomFx(leaf);
-  }
-  /** Obsidian fires markViewportChanged on every zoom/pan — most reliable hook. */
-  patchCanvasViewportHook(leaf) {
-    const canvas = leaf.view.canvas;
-    if (!canvas || this.patchedCanvasViewport.has(canvas)) return;
-    this.patchedCanvasViewport.add(canvas);
-    const c = canvas;
-    const schedule = () => {
-      window.requestAnimationFrame(() => this.syncZoomFx(leaf));
-    };
-    if (typeof c.markViewportChanged === "function") {
-      const orig = c.markViewportChanged.bind(c);
-      c.markViewportChanged = () => {
-        orig();
-        schedule();
-      };
-    }
-    if (typeof c.setViewport === "function") {
-      const orig = c.setViewport.bind(c);
-      c.setViewport = (tx, ty, tZoom) => {
-        orig(tx, ty, tZoom);
-        schedule();
-      };
-    }
-    if (typeof c.setDragging === "function") {
-      const orig = c.setDragging.bind(c);
-      c.setDragging = (dragging) => {
-        orig(dragging);
-        this.setCanvasPanning(leaf, !!dragging);
-      };
-    }
-  }
-  setCanvasPanning(leaf, on) {
-    const id = leaf.id ?? String(leaf);
-    const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
-    const idle = this.panIdleTimers.get(id);
-    if (idle) {
-      window.clearTimeout(idle);
-      this.panIdleTimers.delete(id);
-    }
-    const apply = (active) => {
-      const was = root.classList.contains(PANNING_CLASS);
-      root.classList.toggle(PANNING_CLASS, active);
-      view.containerEl.classList.toggle(PANNING_CLASS, active);
-      view.canvas?.canvasEl?.classList.toggle(PANNING_CLASS, active);
-      this.vibeSparkles.get(id)?.setPanning(active);
-      if (active && !was) {
-        this.vibeControllers.get(id)?.clearAllEffects();
-      }
-    };
-    if (on) {
-      apply(true);
-      return;
-    }
-    const t = window.setTimeout(() => {
-      this.panIdleTimers.delete(id);
-      if (view.canvas?.isDragging) return;
-      apply(false);
-    }, 80);
-    this.panIdleTimers.set(id, t);
-  }
-  syncZoomFx(leaf) {
-    const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
-    const id = leaf.id ?? String(leaf);
-    const zoom = this.readCanvasZoom(view);
-    const far = zoom > 0 && zoom < FAR_ZOOM_THRESHOLD;
-    const wasFar = this.zoomFarByLeaf.get(id) ?? false;
-    root.classList.toggle(FAR_ZOOM_CLASS, far);
-    view.containerEl.classList.toggle(FAR_ZOOM_CLASS, far);
-    view.canvas?.canvasEl?.classList.toggle(FAR_ZOOM_CLASS, far);
-    this.zoomFarByLeaf.set(id, far);
-    this.vibeSparkles.get(id)?.setZoom(zoom);
-    this.vibeControllers.get(id)?.setZoom(zoom);
-    if (wasFar && !far) {
-      this.queueAuraRestart(leaf);
-    }
-    const canvas = view.canvas;
-    const x = canvas?.tx ?? canvas?.x ?? 0;
-    const y = canvas?.ty ?? canvas?.y ?? 0;
-    const prev = this.lastViewportByLeaf.get(id);
-    this.lastViewportByLeaf.set(id, { x, y, zoom });
-    if (prev) {
-      const moved = Math.abs(prev.x - x) > 0.5 || Math.abs(prev.y - y) > 0.5;
-      const zoomed = Math.abs(prev.zoom - zoom) > 1e-3;
-      if (zoomed) {
-        this.setCanvasZoomSettling(leaf, true);
-        this.setCanvasZoomSettling(leaf, false);
-        const rel = Math.abs(zoom - prev.zoom) / Math.max(prev.zoom, 1e-3);
-        if (rel >= SHARP_ZOOM_REL && !far) {
-          this.queueAuraRestart(leaf);
-        }
-      }
-      if (moved && !zoomed) {
-        this.setCanvasPanning(leaf, true);
-        this.setCanvasPanning(leaf, false);
-      }
-    }
-    if (canvas?.isDragging) this.setCanvasPanning(leaf, true);
-  }
-  /**
-   * Debounced CSS animation restart (auras stay visible).
-   * Skips while far-zoom lite CSS is active.
-   */
-  queueAuraRestart(leaf) {
-    const id = leaf.id ?? String(leaf);
-    const view = leaf.view;
-    const prev = this.auraRestartTimers.get(id);
-    if (prev) window.clearTimeout(prev);
-    const t = window.setTimeout(() => {
-      this.auraRestartTimers.delete(id);
-      if (this.zoomFarByLeaf.get(id)) return;
-      this.restartAuraAnimations(view);
-    }, 80);
-    this.auraRestartTimers.set(id, t);
-  }
-  /** Re-enable breathe/drift after far-zoom or a sharp near-zoom jump. */
-  restartAuraAnimations(view) {
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
-    if (root.classList.contains(FAR_ZOOM_CLASS) || view.containerEl.classList.contains(FAR_ZOOM_CLASS)) {
-      return;
-    }
-    const auras = view.containerEl.querySelectorAll(
-      ".intuition-image-aura, .intuition-image-aura__blob"
-    );
-    if (!auras.length) return;
-    auras.forEach((el) => {
-      el.style.setProperty("animation", "none");
-    });
-    void view.containerEl.offsetWidth;
-    requestAnimationFrame(() => {
-      auras.forEach((el) => {
-        el.style.removeProperty("animation");
-      });
-    });
-  }
-  /** Suspend media tilt + hide auras briefly while zoom is still settling. */
-  setCanvasZoomSettling(leaf, on) {
-    const id = leaf.id ?? String(leaf);
-    const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
-    const idle = this.zoomIdleTimers.get(id);
-    if (idle) {
-      window.clearTimeout(idle);
-      this.zoomIdleTimers.delete(id);
-    }
-    const apply = (active) => {
-      const was = root.classList.contains(ZOOM_SETTLING_CLASS);
-      root.classList.toggle(ZOOM_SETTLING_CLASS, active);
-      view.containerEl.classList.toggle(ZOOM_SETTLING_CLASS, active);
-      view.canvas?.canvasEl?.classList.toggle(ZOOM_SETTLING_CLASS, active);
-      if (active && !was) {
-        this.vibeControllers.get(id)?.clearAllEffects();
-      }
-    };
-    if (on) {
-      apply(true);
-      return;
-    }
-    const t = window.setTimeout(() => {
-      this.zoomIdleTimers.delete(id);
-      apply(false);
-    }, 120);
-    this.zoomIdleTimers.set(id, t);
-  }
-  readCanvasZoom(view) {
-    const canvas = view.canvas;
-    const fromZoom = canvas?.zoom;
-    const fromTarget = canvas?.tZoom;
-    const lastGood = (canvas ? this.lastGoodZoomByCanvas.get(canvas) : void 0) ?? 1;
-    const MIN_ZOOM = 0.01;
-    const isSane = (z) => typeof z === "number" && Number.isFinite(z) && z >= MIN_ZOOM;
-    let usedFallback = true;
-    let result = lastGood;
-    if (isSane(fromZoom)) {
-      result = fromZoom;
-      usedFallback = false;
-    } else if (isSane(fromTarget)) {
-      result = fromTarget;
-      usedFallback = false;
-    } else {
-      const canvasEl = canvas?.canvasEl ?? view.containerEl.querySelector(".canvas");
-      if (canvasEl) {
-        const scale = readElementScale(canvasEl);
-        if (isSane(scale)) {
-          result = scale;
-          usedFallback = false;
-        }
-      }
-      if (usedFallback) {
-        const hosts = [
-          canvas?.wrapperEl,
-          view.containerEl.querySelector(".canvas-wrapper")
-        ].filter(Boolean);
-        for (const el of hosts) {
-          const scale = readElementScale(el);
-          if (isSane(scale)) {
-            result = scale;
-            usedFallback = false;
-            break;
-          }
-        }
-      }
-    }
-    if (canvas && isSane(result)) {
-      this.lastGoodZoomByCanvas.set(canvas, result);
-    }
-    return result;
-  }
   ensureFpsOverlay(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     const view = leaf.view;
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
     let fps = this.fpsOverlays.get(id);
@@ -6374,15 +7094,14 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     fps.setSparkleCountProvider(
       () => this.vibeSparkles.get(id)?.getActiveCount() ?? 0
     );
-    fps.setZoomProvider(() => this.readCanvasZoom(view));
+    fps.setZoomProvider(() => this.zoomFx.readZoom(view));
     fps.attach(host);
   }
   /** Sticky mini-player: keeps audio alive when the Canvas node leaves the viewport. */
   ensureStickyAudioPlayer(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     const view = leaf.view;
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
-    const canvasRoot = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
     let player = this.stickyAudioPlayers.get(id);
     if (!player) {
       player = new StickyAudioPlayer();
@@ -6398,20 +7117,20 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       this.settings.stickyAudioLoop = loop;
       void this.saveSettings();
     });
-    player.attach(host, canvasRoot);
+    player.attach(host, canvasRoot(view));
   }
   ensureVibeController(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
+    const root = canvasRoot(view);
     const suspendOpts = {
-      getSuspended: () => this.aspectResizeActive,
+      getSuspended: () => this.imageResize.isActive,
       getSelectionCount: () => {
         const sel = view.canvas?.selection;
         if (sel) return sel.size;
         return view.containerEl.querySelectorAll(".canvas-node.is-selected").length;
       },
-      getZoom: () => this.readCanvasZoom(view),
+      getZoom: () => this.zoomFx.readZoom(view),
       getCards: () => {
         const nodes = view.canvas?.nodes;
         const out = [];
@@ -6456,496 +7175,85 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     sparkles.attach(root, suspendOpts);
     sparkles.setConfig(normalizeSparkleConfig(this.settings.vibeSparkles));
   }
+  vibePanelCallbacks() {
+    return {
+      getVibeStrength: () => this.clampVibeStrength(this.settings.vibeStrength),
+      getVibeTextStrength: () => this.clampVibeTextStrength(this.settings.vibeTextStrength),
+      getSparkles: () => normalizeSparkleConfig(this.settings.vibeSparkles),
+      getAura: () => normalizeGlobalAura(this.settings.globalAura),
+      getSections: () => this.settings.vibePanelSections ?? {},
+      onStrength: (n) => this.setVibeStrength(n, true),
+      onTextStrength: (n) => this.setVibeTextStrength(n, true),
+      onSparkles: (partial) => this.patchVibeSparkles(partial, true),
+      onResetSparkles: () => this.resetVibeSparkles(),
+      onAura: (partial) => this.patchGlobalAura(partial, true),
+      onApplyAuraAll: () => this.applyGlobalAuraToAllImages(),
+      onResetAura: () => this.resetGlobalAura(),
+      onSectionToggle: (key, open) => {
+        this.settings.vibePanelSections = {
+          ...this.settings.vibePanelSections ?? {},
+          [key]: open
+        };
+        this.queueVibeSettingsSave();
+      }
+    };
+  }
   ensureVibeStrengthPanel(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     const view = leaf.view;
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
     const existing = this.vibePanels.get(id);
     if (existing) {
-      if (!existing.isConnected) host.appendChild(existing);
-      existing.hidden = !this.settings.vibeMode;
+      existing.reattach(host);
+      existing.setVisible(this.settings.vibeMode);
       return;
     }
-    const panel = document.createElement("div");
-    panel.className = "intuition-vibe-panel";
-    panel.setAttribute("data-intuition-vibe-panel", "1");
-    panel.hidden = !this.settings.vibeMode;
-    const sections = this.settings.vibePanelSections ?? {};
-    const cfg = normalizeSparkleConfig(this.settings.vibeSparkles);
-    const aura = normalizeGlobalAura(this.settings.globalAura);
-    const tiltSec = this.createVibeAccordion(
-      panel,
-      "tilt",
-      "\u0420\u0435\u0430\u043A\u0446\u0438\u044F",
-      !!sections.tilt
-    );
-    tiltSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u041D\u0430\u043A\u043B\u043E\u043D",
-        sliderClass: "intuition-vibe-panel__slider--tilt",
-        valueClass: "intuition-vibe-panel__value--tilt",
-        aria: "\u0421\u0438\u043B\u0430 \u043D\u0430\u043A\u043B\u043E\u043D\u0430 \u043A\u0430\u0440\u0442\u0438\u043D\u043E\u043A",
-        initial: this.clampVibeStrength(this.settings.vibeStrength),
-        onInput: (n) => this.setVibeStrength(n, true)
-      })
-    );
-    tiltSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u0422\u0435\u043A\u0441\u0442",
-        sliderClass: "intuition-vibe-panel__slider--text",
-        valueClass: "intuition-vibe-panel__value--text",
-        aria: "\u0421\u0438\u043B\u0430 \u0441\u0432\u0435\u0447\u0435\u043D\u0438\u044F \u0442\u0435\u043A\u0441\u0442\u0430 \u043F\u0440\u0438 \u043D\u0430\u0432\u0435\u0434\u0435\u043D\u0438\u0438",
-        initial: this.clampVibeTextStrength(this.settings.vibeTextStrength),
-        onInput: (n) => this.setVibeTextStrength(n, true)
-      })
-    );
-    const sparkSec = this.createVibeAccordion(
-      panel,
-      "sparkles",
-      "\u0411\u043B\u0435\u0441\u0442\u043A\u0438",
-      !!sections.sparkles
-    );
-    sparkSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u041A\u043E\u043B-\u0432\u043E",
-        sliderClass: "intuition-vibe-panel__slider--amount",
-        valueClass: "intuition-vibe-panel__value--amount",
-        aria: "\u041C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u043E\u0435 \u043A\u043E\u043B\u0438\u0447\u0435\u0441\u0442\u0432\u043E \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
-        min: SPARKLE_LIMITS.amount.min,
-        max: SPARKLE_LIMITS.amount.max,
-        initial: cfg.amount,
-        format: (n) => String(n),
-        onInput: (n) => this.patchVibeSparkles({ amount: n }, true)
-      })
-    );
-    sparkSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u0427\u0430\u0441\u0442\u043E\u0442\u0430",
-        sliderClass: "intuition-vibe-panel__slider--freq",
-        valueClass: "intuition-vibe-panel__value--freq",
-        aria: "\u0427\u0430\u0441\u0442\u043E\u0442\u0430 \u0441\u043F\u0430\u0432\u043D\u0430 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
-        min: SPARKLE_LIMITS.frequency.min,
-        max: SPARKLE_LIMITS.frequency.max,
-        initial: cfg.frequency,
-        format: (n) => String(n),
-        onInput: (n) => this.patchVibeSparkles({ frequency: n }, true)
-      })
-    );
-    sparkSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u0420\u0430\u0437\u043C\u0435\u0440",
-        sliderClass: "intuition-vibe-panel__slider--size",
-        valueClass: "intuition-vibe-panel__value--size",
-        aria: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
-        min: SPARKLE_LIMITS.size.min,
-        max: SPARKLE_LIMITS.size.max,
-        initial: cfg.size,
-        format: (n) => `${n}px`,
-        onInput: (n) => this.patchVibeSparkles({ size: n }, true)
-      })
-    );
-    sparkSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u0416\u0438\u0437\u043D\u044C",
-        sliderClass: "intuition-vibe-panel__slider--life",
-        valueClass: "intuition-vibe-panel__value--life",
-        aria: "\u0412\u0440\u0435\u043C\u044F \u0436\u0438\u0437\u043D\u0438 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
-        min: SPARKLE_LIMITS.lifetime.min,
-        max: SPARKLE_LIMITS.lifetime.max,
-        step: 100,
-        initial: cfg.lifetime,
-        format: (n) => `${(n / 1e3).toFixed(1)}\u0441`,
-        onInput: (n) => this.patchVibeSparkles({ lifetime: n }, true)
-      })
-    );
-    sparkSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u042F\u0440\u043A\u043E\u0441\u0442\u044C",
-        sliderClass: "intuition-vibe-panel__slider--opacity",
-        valueClass: "intuition-vibe-panel__value--opacity",
-        aria: "\u042F\u0440\u043A\u043E\u0441\u0442\u044C \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
-        min: SPARKLE_LIMITS.opacity.min,
-        max: SPARKLE_LIMITS.opacity.max,
-        initial: cfg.opacity,
-        onInput: (n) => this.patchVibeSparkles({ opacity: n }, true)
-      })
-    );
-    sparkSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u041F\u043E\u0434\u044A\u0451\u043C",
-        sliderClass: "intuition-vibe-panel__slider--drift",
-        valueClass: "intuition-vibe-panel__value--drift",
-        aria: "\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u043F\u043E\u0434\u044A\u0451\u043C\u0430 \u0431\u043B\u0435\u0441\u0442\u043E\u043A",
-        min: SPARKLE_LIMITS.drift.min,
-        max: SPARKLE_LIMITS.drift.max,
-        initial: cfg.drift,
-        format: (n) => String(n),
-        onInput: (n) => this.patchVibeSparkles({ drift: n }, true)
-      })
-    );
-    const colorRow = document.createElement("div");
-    colorRow.className = "intuition-vibe-panel__row";
-    const colorLabel = document.createElement("span");
-    colorLabel.className = "intuition-vibe-panel__label";
-    colorLabel.textContent = "\u0426\u0432\u0435\u0442";
-    const colorInput = document.createElement("input");
-    colorInput.type = "color";
-    colorInput.className = "intuition-vibe-panel__color intuition-vibe-panel__slider--color";
-    colorInput.value = cfg.color;
-    colorInput.setAttribute("aria-label", "\u0426\u0432\u0435\u0442 \u0431\u043B\u0435\u0441\u0442\u043E\u043A");
-    colorInput.addEventListener("pointerdown", (e) => e.stopPropagation());
-    colorInput.addEventListener("click", (e) => e.stopPropagation());
-    colorInput.addEventListener(
-      "input",
-      () => this.patchVibeSparkles({ color: colorInput.value }, true)
-    );
-    colorRow.appendChild(colorLabel);
-    colorRow.appendChild(colorInput);
-    sparkSec.body.appendChild(colorRow);
-    const resetSparkle = document.createElement("div");
-    resetSparkle.className = "intuition-vibe-panel__row intuition-vibe-panel__row--full";
-    const resetSparkleBtn = document.createElement("button");
-    resetSparkleBtn.type = "button";
-    resetSparkleBtn.className = "mod-muted intuition-vibe-panel__reset";
-    resetSparkleBtn.textContent = "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0431\u043B\u0435\u0441\u0442\u043A\u0438";
-    resetSparkleBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
-    resetSparkleBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.resetVibeSparkles();
-    });
-    resetSparkle.appendChild(resetSparkleBtn);
-    sparkSec.body.appendChild(resetSparkle);
-    const auraSec = this.createVibeAccordion(
-      panel,
-      "auras",
-      "\u0410\u0443\u0440\u044B",
-      !!sections.auras
-    );
-    auraSec.body.appendChild(
-      this.createVibeToggleRow({
-        label: "\u0412\u043A\u043B.",
-        inputClass: "intuition-vibe-panel__aura-enabled",
-        checked: aura.enabled,
-        aria: "\u0410\u0443\u0440\u044B \u043D\u0430 \u0432\u0441\u0435\u0445 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0430\u0445",
-        onChange: (on) => this.patchGlobalAura({ enabled: on }, true)
-      })
-    );
-    auraSec.body.appendChild(
-      this.createVibeToggleRow({
-        label: "\u041F\u0435\u0440\u0435\u043B\u0438\u0432",
-        inputClass: "intuition-vibe-panel__aura-shimmer",
-        checked: aura.shimmer,
-        aria: "\u041F\u0435\u0440\u0435\u043B\u0438\u0432 \u0430\u0443\u0440\u044B",
-        onChange: (on) => this.patchGlobalAura({ shimmer: on }, true)
-      })
-    );
-    auraSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u0421\u0438\u043B\u0430",
-        sliderClass: "intuition-vibe-panel__slider--aura-str",
-        valueClass: "intuition-vibe-panel__value--aura-str",
-        aria: "\u0421\u0438\u043B\u0430 \u0430\u0443\u0440\u044B",
-        initial: aura.strength,
-        onInput: (n) => this.patchGlobalAura({ strength: n }, true)
-      })
-    );
-    auraSec.body.appendChild(
-      this.createVibeSliderRow({
-        label: "\u041F\u043B\u043E\u0449\u0430\u0434\u044C",
-        sliderClass: "intuition-vibe-panel__slider--aura-size",
-        valueClass: "intuition-vibe-panel__value--aura-size",
-        aria: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0430\u0443\u0440\u044B",
-        min: 0,
-        max: 200,
-        step: 5,
-        initial: aura.size,
-        format: (n) => `${n}%`,
-        onInput: (n) => this.patchGlobalAura({ size: n }, true)
-      })
-    );
-    const applyAuraRow = document.createElement("div");
-    applyAuraRow.className = "intuition-vibe-panel__row intuition-vibe-panel__row--full";
-    const applyAuraBtn = document.createElement("button");
-    applyAuraBtn.type = "button";
-    applyAuraBtn.className = "mod-cta intuition-vibe-panel__reset";
-    applyAuraBtn.textContent = "\u041F\u0440\u0438\u043C\u0435\u043D\u0438\u0442\u044C \u043A\u043E \u0432\u0441\u0435\u043C";
-    applyAuraBtn.title = "\u0417\u0430\u043F\u0438\u0441\u0430\u0442\u044C \u044D\u0442\u0438 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0430\u0443\u0440\u044B \u043D\u0430 \u0432\u0441\u0435 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430";
-    applyAuraBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
-    applyAuraBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.applyGlobalAuraToAllImages();
-    });
-    applyAuraRow.appendChild(applyAuraBtn);
-    auraSec.body.appendChild(applyAuraRow);
-    const resetAuraRow = document.createElement("div");
-    resetAuraRow.className = "intuition-vibe-panel__row intuition-vibe-panel__row--full";
-    const resetAuraBtn = document.createElement("button");
-    resetAuraBtn.type = "button";
-    resetAuraBtn.className = "mod-muted intuition-vibe-panel__reset";
-    resetAuraBtn.textContent = "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0430\u0443\u0440\u044B";
-    resetAuraBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
-    resetAuraBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.resetGlobalAura();
-    });
-    resetAuraRow.appendChild(resetAuraBtn);
-    auraSec.body.appendChild(resetAuraRow);
-    host.appendChild(panel);
+    const panel = new VibePanel(host, this.vibePanelCallbacks());
+    panel.setVisible(this.settings.vibeMode);
     this.vibePanels.set(id, panel);
   }
-  createVibeAccordion(panel, key, title, open) {
-    const section = document.createElement("div");
-    section.className = "intuition-vibe-panel__accordion";
-    section.dataset.section = key;
-    if (open) section.classList.add("is-open");
-    const head = document.createElement("div");
-    head.className = "intuition-vibe-panel__accordion-head";
-    head.setAttribute("role", "button");
-    head.tabIndex = 0;
-    head.setAttribute("aria-expanded", open ? "true" : "false");
-    const chevron = document.createElement("span");
-    chevron.className = "intuition-vibe-panel__accordion-chevron";
-    (0, import_obsidian5.setIcon)(chevron, "chevron-right");
-    const label = document.createElement("span");
-    label.className = "intuition-vibe-panel__accordion-title";
-    label.textContent = title;
-    head.appendChild(chevron);
-    head.appendChild(label);
-    const body = document.createElement("div");
-    body.className = "intuition-vibe-panel__accordion-body";
-    const toggle = () => {
-      const next = !section.classList.contains("is-open");
-      section.classList.toggle("is-open", next);
-      head.setAttribute("aria-expanded", next ? "true" : "false");
-      this.settings.vibePanelSections = {
-        ...this.settings.vibePanelSections ?? {},
-        [key]: next
-      };
-      this.queueVibeSettingsSave();
-    };
-    head.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      toggle();
-    });
-    head.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        toggle();
-      }
-    });
-    section.appendChild(head);
-    section.appendChild(body);
-    panel.appendChild(section);
-    return { section, body, head };
-  }
-  createVibeToggleRow(opts) {
-    const row = document.createElement("div");
-    row.className = "intuition-vibe-panel__row";
-    const label = document.createElement("span");
-    label.className = "intuition-vibe-panel__label";
-    label.textContent = opts.label;
-    const wrap = document.createElement("label");
-    wrap.className = "intuition-text-panel__toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.className = opts.inputClass;
-    input.checked = opts.checked;
-    input.setAttribute("aria-label", opts.aria);
-    wrap.appendChild(input);
-    wrap.appendChild(
-      Object.assign(document.createElement("span"), {
-        className: "intuition-text-panel__toggle-ui"
-      })
-    );
-    input.addEventListener("change", () => opts.onChange(input.checked));
-    row.appendChild(label);
-    row.appendChild(wrap);
-    return row;
-  }
-  createVibeSliderRow(opts) {
-    const row = document.createElement("div");
-    row.className = "intuition-vibe-panel__row";
-    const label = document.createElement("span");
-    label.className = "intuition-vibe-panel__label";
-    label.textContent = opts.label;
-    const wrap = document.createElement("div");
-    wrap.className = "intuition-vibe-panel__size";
-    const slider = document.createElement("input");
-    slider.type = "range";
-    slider.min = String(opts.min ?? 0);
-    slider.max = String(opts.max ?? 100);
-    slider.step = String(opts.step ?? 1);
-    slider.className = `intuition-vibe-panel__slider ${opts.sliderClass}`;
-    slider.value = String(opts.initial);
-    slider.setAttribute("aria-label", opts.aria);
-    const value = document.createElement("span");
-    value.className = `intuition-vibe-panel__value ${opts.valueClass}`;
-    const fmt = opts.format ?? ((n) => `${n}%`);
-    value.textContent = fmt(Number(slider.value));
-    slider.addEventListener("pointerdown", (e) => e.stopPropagation());
-    slider.addEventListener("click", (e) => e.stopPropagation());
-    slider.addEventListener("input", () => {
-      const n = Number(slider.value);
-      value.textContent = fmt(n);
-      opts.onInput(n);
-    });
-    wrap.appendChild(slider);
-    wrap.appendChild(value);
-    row.appendChild(label);
-    row.appendChild(wrap);
-    return row;
-  }
   syncVibeStrengthPanel(leaf, visible) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     let panel = this.vibePanels.get(id);
-    if (!panel || !panel.isConnected) {
+    if (!panel || !panel.el.isConnected) {
       this.ensureVibeStrengthPanel(leaf);
       panel = this.vibePanels.get(id);
     }
     if (!panel) return;
-    panel.hidden = !visible;
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--tilt",
-      ".intuition-vibe-panel__value--tilt",
-      this.clampVibeStrength(this.settings.vibeStrength),
-      (n) => `${n}%`
-    );
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--text",
-      ".intuition-vibe-panel__value--text",
-      this.clampVibeTextStrength(this.settings.vibeTextStrength),
-      (n) => `${n}%`
-    );
-    this.syncVibeSparkleControlsOn(panel);
-    this.syncGlobalAuraControlsOn(panel);
-  }
-  syncPanelSlider(panel, sliderSel, valueSel, pct, format = (n) => `${n}%`) {
-    const slider = panel.querySelector(sliderSel);
-    const value = panel.querySelector(valueSel);
-    if (slider) slider.value = String(pct);
-    if (value) value.textContent = format(pct);
+    panel.sync({
+      visible,
+      strength: this.clampVibeStrength(this.settings.vibeStrength),
+      textStrength: this.clampVibeTextStrength(this.settings.vibeTextStrength),
+      sparkles: normalizeSparkleConfig(this.settings.vibeSparkles),
+      aura: normalizeGlobalAura(this.settings.globalAura)
+    });
   }
   syncAllVibeStrengthSliders() {
     const strength = this.clampVibeStrength(this.settings.vibeStrength);
     for (const panel of this.vibePanels.values()) {
-      this.syncPanelSlider(
-        panel,
-        ".intuition-vibe-panel__slider--tilt",
-        ".intuition-vibe-panel__value--tilt",
-        strength
-      );
+      panel.syncStrength(strength);
     }
   }
   syncAllVibeTextStrengthSliders() {
     const textStrength = this.clampVibeTextStrength(this.settings.vibeTextStrength);
     for (const panel of this.vibePanels.values()) {
-      this.syncPanelSlider(
-        panel,
-        ".intuition-vibe-panel__slider--text",
-        ".intuition-vibe-panel__value--text",
-        textStrength
-      );
+      panel.syncTextStrength(textStrength);
     }
   }
   syncVibeSparkleControls() {
+    const cfg = normalizeSparkleConfig(this.settings.vibeSparkles);
     for (const panel of this.vibePanels.values()) {
-      this.syncVibeSparkleControlsOn(panel);
+      panel.syncSparkles(cfg);
     }
   }
   syncGlobalAuraControls() {
+    const g = normalizeGlobalAura(this.settings.globalAura);
     for (const panel of this.vibePanels.values()) {
-      this.syncGlobalAuraControlsOn(panel);
+      panel.syncAura(g);
     }
   }
-  syncGlobalAuraControlsOn(panel) {
-    const g = normalizeGlobalAura(this.settings.globalAura);
-    const enabled = panel.querySelector(
-      ".intuition-vibe-panel__aura-enabled"
-    );
-    const shimmer = panel.querySelector(
-      ".intuition-vibe-panel__aura-shimmer"
-    );
-    if (enabled) enabled.checked = g.enabled;
-    if (shimmer) shimmer.checked = g.shimmer;
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--aura-str",
-      ".intuition-vibe-panel__value--aura-str",
-      g.strength
-    );
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--aura-size",
-      ".intuition-vibe-panel__value--aura-size",
-      g.size,
-      (n) => `${n}%`
-    );
-    if (shimmer) shimmer.disabled = !g.enabled;
-    const str = panel.querySelector(
-      ".intuition-vibe-panel__slider--aura-str"
-    );
-    const size = panel.querySelector(
-      ".intuition-vibe-panel__slider--aura-size"
-    );
-    if (str) str.disabled = !g.enabled;
-    if (size) size.disabled = !g.enabled;
-  }
-  syncVibeSparkleControlsOn(panel) {
-    const cfg = normalizeSparkleConfig(this.settings.vibeSparkles);
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--amount",
-      ".intuition-vibe-panel__value--amount",
-      cfg.amount,
-      (n) => String(n)
-    );
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--freq",
-      ".intuition-vibe-panel__value--freq",
-      cfg.frequency,
-      (n) => String(n)
-    );
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--size",
-      ".intuition-vibe-panel__value--size",
-      cfg.size,
-      (n) => `${n}px`
-    );
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--life",
-      ".intuition-vibe-panel__value--life",
-      cfg.lifetime,
-      (n) => `${(n / 1e3).toFixed(1)}\u0441`
-    );
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--opacity",
-      ".intuition-vibe-panel__value--opacity",
-      cfg.opacity
-    );
-    this.syncPanelSlider(
-      panel,
-      ".intuition-vibe-panel__slider--drift",
-      ".intuition-vibe-panel__value--drift",
-      cfg.drift,
-      (n) => String(n)
-    );
-    const color = panel.querySelector(
-      ".intuition-vibe-panel__slider--color"
-    );
-    if (color) color.value = cfg.color;
-  }
   ensureTextPanel(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     if (this.textPanels.has(id)) return;
     const view = leaf.view;
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
@@ -6953,7 +7261,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.textPanels.set(id, panel);
   }
   ensureImagePanel(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     if (this.imagePanels.has(id)) return;
     const view = leaf.view;
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
@@ -6985,7 +7293,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.imagePanels.set(id, panel);
   }
   ensureCanvasPanel(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     if (this.canvasPanels.has(id)) return;
     const view = leaf.view;
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
@@ -6993,12 +7301,12 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     this.canvasPanels.set(id, panel);
   }
   toggleCanvasPanel(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     this.ensureCanvasPanel(leaf);
     const panel = this.canvasPanels.get(id);
     if (!panel) return;
     const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
+    const root = canvasRoot(view);
     const path = view.file?.path ?? "";
     const style = this.getCanvasChrome(path, view);
     panel.toggle(root, style, (next) => {
@@ -7026,11 +7334,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     }
     this.writeChromeToCanvas(view, normalized);
     this.applyCanvasChromeForLeaf(view, normalized);
-    if (this.chromeSaveTimer) window.clearTimeout(this.chromeSaveTimer);
-    this.chromeSaveTimer = window.setTimeout(() => {
-      this.chromeSaveTimer = 0;
-      void this.saveSettings();
-    }, 200);
+    this.chromeSettingsSave.schedule();
   }
   writeChromeToCanvas(view, style) {
     const canvas = view.canvas;
@@ -7048,14 +7352,14 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     }
   }
   applyCanvasChromeForLeaf(view, style) {
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
+    const root = canvasRoot(view);
     const path = view.file?.path ?? "";
     const stored = !!this.readChromeFromCanvas(view) || !!(path && this.settings.canvasChrome[path]);
     applyCanvasChrome(root, style, stored);
   }
   installTextSelectionHook(leaf) {
     const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
+    const root = canvasRoot(view);
     if (root.getAttribute(TEXT_HOOK_ATTR) === "1") return;
     root.setAttribute(TEXT_HOOK_ATTR, "1");
     const sync = () => this.syncStylePanelsForLeaf(leaf);
@@ -7068,7 +7372,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     window.setTimeout(sync, 50);
   }
   syncStylePanelsForLeaf(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     const textPanel = this.textPanels.get(id);
     const imagePanel = this.imagePanels.get(id);
     if (!textPanel && !imagePanel) return;
@@ -7108,250 +7412,33 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     const view = leaf.view;
     const menu = view.canvas?.cardMenuEl ?? view.containerEl.querySelector(".canvas-card-menu");
     if (!menu) return;
-    if (menu.querySelector(`[${TEXT_BTN_ATTR}]`)) return;
-    const btn = document.createElement("div");
-    btn.className = "canvas-card-menu-button";
-    btn.setAttribute(TEXT_BTN_ATTR, "1");
-    btn.setAttribute("aria-label", "\u0422\u0435\u043A\u0441\u0442 \u0431\u0435\u0437 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438");
-    (0, import_obsidian5.setIcon)(btn, "type");
-    (0, import_obsidian5.setTooltip)(btn, "\u0422\u0435\u043A\u0441\u0442 \u0431\u0435\u0437 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438", { placement: "top" });
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.addPlainTextNode(view);
+    injectCardMenuButton(menu, {
+      attr: TEXT_BTN_ATTR,
+      ariaLabel: "\u0422\u0435\u043A\u0441\u0442 \u0431\u0435\u0437 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438",
+      iconName: "type",
+      onClick: () => this.addPlainTextNode(view)
     });
-    menu.appendChild(btn);
   }
   injectCollageButton(leaf) {
     const view = leaf.view;
     const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
     if (!controls) return;
-    const existing = controls.querySelector(`[${COLLAGE_BTN_ATTR}] button`);
-    if (existing instanceof HTMLButtonElement) {
-      this.syncCollageButton(leaf, existing);
-      return;
-    }
-    const group = document.createElement("div");
-    group.className = "canvas-control-group";
-    group.setAttribute(COLLAGE_BTN_ATTR, "1");
-    const button = document.createElement("button");
-    button.className = "clickable-icon intuition-canvas-toggle";
-    button.type = "button";
-    this.syncCollageButton(leaf, button);
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.toggleCollagePanel(leaf);
+    injectControlButton(controls, {
+      attr: COLLAGE_BTN_ATTR,
+      sync: (button) => this.syncCollageButton(leaf, button),
+      onClick: () => this.arrangeSelectedImagesCollage(view)
     });
-    group.appendChild(button);
-    controls.appendChild(group);
   }
-  ensureCollagePanel(leaf) {
-    const id = leaf.id ?? String(leaf);
-    if (this.collagePanels.has(id)) return;
-    const view = leaf.view;
-    const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
-    const panel = document.createElement("div");
-    panel.className = "intuition-collage-panel";
-    panel.setAttribute("data-intuition-collage-panel", "1");
-    panel.hidden = true;
-    const title = document.createElement("div");
-    title.className = "intuition-collage-panel__title";
-    title.textContent = "\u041A\u043E\u043B\u043B\u0430\u0436";
-    const gapRow = document.createElement("div");
-    gapRow.className = "intuition-collage-panel__row";
-    const gapLabel = document.createElement("span");
-    gapLabel.className = "intuition-collage-panel__label";
-    gapLabel.textContent = "\u041E\u0442\u0441\u0442\u0443\u043F\u044B";
-    const slider = document.createElement("input");
-    slider.type = "range";
-    slider.min = "0";
-    slider.max = String(COLLAGE_GAP_SLIDER_MAX);
-    slider.step = "1";
-    slider.className = "intuition-collage-panel__slider";
-    slider.value = String(
-      Math.min(COLLAGE_GAP_SLIDER_MAX, clampCollageGap(this.settings.collageGap))
-    );
-    slider.setAttribute("aria-label", "\u041E\u0442\u0441\u0442\u0443\u043F\u044B \u043C\u0435\u0436\u0434\u0443 \u0444\u043E\u0442\u043E");
-    slider.setAttribute("data-collage-gap", "1");
-    const gapInput = document.createElement("input");
-    gapInput.type = "number";
-    gapInput.min = "0";
-    gapInput.max = String(COLLAGE_GAP_MAX);
-    gapInput.step = "1";
-    gapInput.className = "intuition-collage-panel__number";
-    gapInput.value = String(clampCollageGap(this.settings.collageGap));
-    gapInput.setAttribute("aria-label", "\u041E\u0442\u0441\u0442\u0443\u043F\u044B \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445");
-    gapInput.setAttribute("data-collage-gap-px", "1");
-    const applyGap = (raw) => {
-      const gap = clampCollageGap(raw);
-      slider.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
-      gapInput.value = String(gap);
-      this.settings.collageGap = gap;
-      this.queueCollageSettingsSave();
-      this.syncAllCollageButtons();
-    };
-    slider.addEventListener("pointerdown", (e) => e.stopPropagation());
-    slider.addEventListener("click", (e) => e.stopPropagation());
-    slider.addEventListener("input", () => applyGap(Number(slider.value)));
-    gapInput.addEventListener("pointerdown", (e) => e.stopPropagation());
-    gapInput.addEventListener("click", (e) => e.stopPropagation());
-    const commitGapPx = () => applyGap(Number(gapInput.value));
-    gapInput.addEventListener("change", commitGapPx);
-    gapInput.addEventListener("blur", commitGapPx);
-    gapInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        commitGapPx();
-        gapInput.blur();
-      }
-    });
-    gapRow.appendChild(gapLabel);
-    gapRow.appendChild(slider);
-    gapRow.appendChild(gapInput);
-    const gridRow = document.createElement("div");
-    gridRow.className = "intuition-collage-panel__row";
-    const gridLabel = document.createElement("span");
-    gridLabel.className = "intuition-collage-panel__label";
-    gridLabel.textContent = "\u0421\u0435\u0442\u043A\u0430";
-    const axisSelect = document.createElement("select");
-    axisSelect.className = "dropdown intuition-collage-panel__select";
-    axisSelect.setAttribute("data-collage-axis", "1");
-    axisSelect.setAttribute("aria-label", "\u0421\u0442\u043E\u043B\u0431\u0446\u044B \u0438\u043B\u0438 \u0441\u0442\u0440\u043E\u043A\u0438");
-    for (const opt of [
-      { value: "cols", label: "\u0421\u0442\u043E\u043B\u0431\u0446\u044B" },
-      { value: "rows", label: "\u0421\u0442\u0440\u043E\u043A\u0438" }
-    ]) {
-      const option = document.createElement("option");
-      option.value = opt.value;
-      option.textContent = opt.label;
-      axisSelect.appendChild(option);
-    }
-    axisSelect.value = normalizeCollagePackAxis(this.settings.collagePackAxis);
-    axisSelect.addEventListener("pointerdown", (e) => e.stopPropagation());
-    axisSelect.addEventListener("click", (e) => e.stopPropagation());
-    const countLabel = document.createElement("span");
-    countLabel.className = "intuition-collage-panel__label";
-    countLabel.setAttribute("data-collage-count-label", "1");
-    countLabel.textContent = normalizeCollagePackAxis(this.settings.collagePackAxis) === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B";
-    const countSlider = document.createElement("input");
-    countSlider.type = "range";
-    countSlider.min = String(COLLAGE_COUNT_MIN);
-    countSlider.max = String(COLLAGE_COUNT_MAX);
-    countSlider.step = "1";
-    countSlider.className = "intuition-collage-panel__slider";
-    countSlider.setAttribute("data-collage-count-slider", "1");
-    countSlider.value = String(clampCollageCount(this.settings.collageCount));
-    const countInput = document.createElement("input");
-    countInput.type = "number";
-    countInput.min = String(COLLAGE_COUNT_MIN);
-    countInput.max = String(COLLAGE_COUNT_MAX);
-    countInput.step = "1";
-    countInput.className = "intuition-collage-panel__number";
-    countInput.setAttribute("data-collage-count", "1");
-    countInput.value = String(clampCollageCount(this.settings.collageCount));
-    const applyCount = (raw) => {
-      const count = clampCollageCount(raw);
-      countSlider.value = String(count);
-      countInput.value = String(count);
-      this.settings.collageCount = count;
-      this.queueCollageSettingsSave();
-      this.syncAllCollageButtons();
-    };
-    axisSelect.addEventListener("change", () => {
-      this.settings.collagePackAxis = normalizeCollagePackAxis(axisSelect.value);
-      countLabel.textContent = normalizeCollagePackAxis(axisSelect.value) === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B";
-      this.queueCollageSettingsSave();
-      this.syncAllCollageButtons();
-    });
-    countSlider.addEventListener("pointerdown", (e) => e.stopPropagation());
-    countSlider.addEventListener("click", (e) => e.stopPropagation());
-    countSlider.addEventListener(
-      "input",
-      () => applyCount(Number(countSlider.value))
-    );
-    countInput.addEventListener("pointerdown", (e) => e.stopPropagation());
-    countInput.addEventListener("click", (e) => e.stopPropagation());
-    const commitCount = () => applyCount(Number(countInput.value));
-    countInput.addEventListener("change", commitCount);
-    countInput.addEventListener("blur", commitCount);
-    gridRow.appendChild(gridLabel);
-    gridRow.appendChild(axisSelect);
-    const countRow = document.createElement("div");
-    countRow.className = "intuition-collage-panel__row";
-    countRow.appendChild(countLabel);
-    countRow.appendChild(countSlider);
-    countRow.appendChild(countInput);
-    const apply = document.createElement("button");
-    apply.type = "button";
-    apply.className = "mod-cta intuition-collage-panel__apply";
-    apply.textContent = "\u0412 \u0441\u0435\u0442\u043A\u0443";
-    apply.addEventListener("pointerdown", (e) => e.stopPropagation());
-    apply.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.arrangeSelectedImagesCollage(view);
-    });
-    panel.appendChild(title);
-    panel.appendChild(gapRow);
-    panel.appendChild(gridRow);
-    panel.appendChild(countRow);
-    panel.appendChild(apply);
-    host.appendChild(panel);
-    this.collagePanels.set(id, panel);
-    this.syncCollagePanelControls(panel);
-  }
-  toggleCollagePanel(leaf) {
-    const id = leaf.id ?? String(leaf);
-    this.ensureCollagePanel(leaf);
-    const panel = this.collagePanels.get(id);
-    if (!panel) return;
-    panel.hidden = !panel.hidden;
-    this.syncCollageButton(
-      leaf,
-      leaf.view.containerEl.querySelector(`[${COLLAGE_BTN_ATTR}] button`)
-    );
-    if (!panel.hidden) this.syncCollagePanelControls(panel);
-  }
-  syncCollagePanelControls(panel) {
-    const gap = clampCollageGap(this.settings.collageGap);
-    const axis = normalizeCollagePackAxis(this.settings.collagePackAxis);
-    const count = clampCollageCount(this.settings.collageCount);
-    const slider = panel.querySelector("[data-collage-gap]");
-    const gapPx = panel.querySelector("[data-collage-gap-px]");
-    if (slider) slider.value = String(Math.min(COLLAGE_GAP_SLIDER_MAX, gap));
-    if (gapPx) gapPx.value = String(gap);
-    const axisSelect = panel.querySelector("[data-collage-axis]");
-    if (axisSelect) axisSelect.value = axis;
-    const countLabel = panel.querySelector(
-      "[data-collage-count-label]"
-    );
-    if (countLabel) {
-      countLabel.textContent = axis === "rows" ? "\u0421\u0442\u0440\u043E\u043A\u0438" : "\u0421\u0442\u043E\u043B\u0431\u0446\u044B";
-    }
-    const countSlider = panel.querySelector(
-      "[data-collage-count-slider]"
-    );
-    const countInput = panel.querySelector(
-      "[data-collage-count]"
-    );
-    if (countSlider) countSlider.value = String(count);
-    if (countInput) countInput.value = String(count);
-  }
-  syncCollageButton(leaf, button) {
+  syncCollageButton(_leaf, button) {
     if (!button) return;
-    const id = leaf.id ?? String(leaf);
-    const open = !(this.collagePanels.get(id)?.hidden ?? true);
     const gap = clampCollageGap(this.settings.collageGap);
-    button.classList.toggle("is-active", open);
-    (0, import_obsidian5.setIcon)(button, "layout-grid");
-    (0, import_obsidian5.setTooltip)(button, open ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" : "\u041A\u043E\u043B\u043B\u0430\u0436", {
-      placement: "left"
+    const count = clampCollageCount(this.settings.collageCount);
+    const axis = normalizeCollagePackAxis(this.settings.collagePackAxis);
+    const axisLabel = axis === "rows" ? "\u0441\u0442\u0440\u043E\u043A" : "\u0441\u0442\u043E\u043B\u0431\u0446\u043E\u0432";
+    syncControlButton(button, {
+      title: `\u041A\u043E\u043B\u043B\u0430\u0436 \xB7 ${gap}px \xB7 ${count} ${axisLabel}`,
+      iconName: "layout-grid"
     });
-    button.setAttribute(
-      "aria-label",
-      open ? "\u0421\u043A\u0440\u044B\u0442\u044C \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u043E\u043B\u043B\u0430\u0436\u0430" : `\u041A\u043E\u043B\u043B\u0430\u0436, \u043E\u0442\u0441\u0442\u0443\u043F\u044B ${gap}px`
-    );
   }
   syncAllCollageButtons() {
     for (const leaf of this.app.workspace.getLeavesOfType(CANVAS_VIEW_TYPE)) {
@@ -7362,28 +7449,14 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
         leaf,
         btn instanceof HTMLButtonElement ? btn : null
       );
-      const id = leaf.id ?? String(leaf);
-      const panel = this.collagePanels.get(id);
-      if (panel && !panel.hidden) this.syncCollagePanelControls(panel);
-      this.imagePanels.get(id)?.syncCollageFromHooks();
+      this.imagePanels.get(leafId(leaf))?.syncCollageFromHooks();
     }
   }
-  clampCollageGap(value) {
-    return clampCollageGap(value);
-  }
   queueCollageSettingsSave() {
-    if (this.collageGapSaveTimer) window.clearTimeout(this.collageGapSaveTimer);
-    this.collageGapSaveTimer = window.setTimeout(() => {
-      this.collageGapSaveTimer = 0;
-      void this.saveSettings();
-    }, 200);
+    this.collageSettingsSave.schedule();
   }
   queuePresentationSettingsSave() {
-    if (this.presentationSaveTimer) window.clearTimeout(this.presentationSaveTimer);
-    this.presentationSaveTimer = window.setTimeout(() => {
-      this.presentationSaveTimer = 0;
-      void this.saveSettings();
-    }, 200);
+    this.presentationSettingsSave.schedule();
   }
   patchPresentationSettings(partial) {
     this.settings.presentation = normalizePresentationSettings({
@@ -7394,11 +7467,11 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
   }
   /** Full-viewport slideshow for selected images (crossfade + Ken Burns). */
   startPhotoPresentation(leaf) {
-    const id = leaf.id ?? String(leaf);
+    const id = leafId(leaf);
     const view = leaf.view;
     const selected = this.getSelectedImageNodes(view);
     if (selected.length < 1) {
-      new import_obsidian5.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B \u043E\u0434\u043D\u0443 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1600);
+      new import_obsidian7.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B \u043E\u0434\u043D\u0443 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0443", 1600);
       return;
     }
     const ordered = sortNodesReadingOrder(
@@ -7422,7 +7495,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       });
     }
     if (slides.length === 0) {
-      new import_obsidian5.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
+      new import_obsidian7.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F", 2e3);
       return;
     }
     const host = view.containerEl.querySelector(".view-content") ?? view.containerEl;
@@ -7439,10 +7512,10 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       )
     });
     if (!ok) {
-      new import_obsidian5.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u043F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044E", 1600);
+      new import_obsidian7.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u043F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044E", 1600);
       return;
     }
-    new import_obsidian5.Notice(`\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F: ${slides.length} \u0444\u043E\u0442\u043E \xB7 Esc \u2014 \u0432\u044B\u0445\u043E\u0434`, 2200);
+    new import_obsidian7.Notice(`\u041F\u0440\u0435\u0437\u0435\u043D\u0442\u0430\u0446\u0438\u044F: ${slides.length} \u0444\u043E\u0442\u043E \xB7 Esc \u2014 \u0432\u044B\u0445\u043E\u0434`, 2200);
   }
   resolveImageSlideSrc(node) {
     const img = node.nodeEl?.querySelector("img");
@@ -7451,7 +7524,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     const path = node.file?.path ?? node.filePath ?? (typeof node.getData?.()?.file === "string" ? node.getData()?.file : void 0);
     if (!path) return fromDom || null;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian5.TFile) {
+    if (file instanceof import_obsidian7.TFile) {
       return this.app.vault.getResourcePath(file);
     }
     return fromDom || null;
@@ -7460,7 +7533,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
   arrangeSelectedImagesCollage(view) {
     const selected = this.getSelectedImageNodes(view);
     if (selected.length < 2) {
-      new import_obsidian5.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B 2 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438", 1600);
+      new import_obsidian7.Notice("\u0412\u044B\u0434\u0435\u043B\u0438 \u0445\u043E\u0442\u044F \u0431\u044B 2 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438", 1600);
       return;
     }
     const gap = clampCollageGap(this.settings.collageGap);
@@ -7507,7 +7580,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     }
     view.canvas?.requestSave?.();
     const axisNote = axis === "rows" ? ` \xB7 ${count} \u0441\u0442\u0440.` : ` \xB7 ${count} \u0441\u0442\u043B\u0431.`;
-    new import_obsidian5.Notice(
+    new import_obsidian7.Notice(
       `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u043E\u0442\u0441\u0442\u0443\u043F\u044B ${gap}px${axisNote}`,
       1400
     );
@@ -7515,7 +7588,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
   addPlainTextNode(view) {
     const canvas = view.canvas;
     if (!canvas?.createTextNode) {
-      new import_obsidian5.Notice("Canvas API: createTextNode \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D");
+      new import_obsidian7.Notice("Canvas API: createTextNode \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D");
       return;
     }
     const center = canvas.posCenter?.() ?? { x: 0, y: 0 };
@@ -7528,7 +7601,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
       focus: true
     });
     if (!node) {
-      new import_obsidian5.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442");
+      new import_obsidian7.Notice("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0437\u0434\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442");
       return;
     }
     writeTextStyle(node, { ...DEFAULT_TEXT_STYLE });
@@ -7538,98 +7611,53 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     if (leaf) {
       window.setTimeout(() => this.syncStylePanelsForLeaf(leaf), 50);
     }
-    new import_obsidian5.Notice("\u0422\u0435\u043A\u0441\u0442 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D", 1500);
+    new import_obsidian7.Notice("\u0422\u0435\u043A\u0441\u0442 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D", 1500);
   }
   injectToggle(leaf) {
     const view = leaf.view;
     const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
     if (!controls) return;
-    if (controls.querySelector(`[${BUTTON_ATTR}]`)) {
-      this.syncToggleButton(controls.querySelector(`[${BUTTON_ATTR}]`));
-      return;
-    }
-    const group = document.createElement("div");
-    group.className = "canvas-control-group";
-    group.setAttribute(BUTTON_ATTR, "1");
-    const button = document.createElement("button");
-    button.className = "clickable-icon intuition-canvas-toggle";
-    button.type = "button";
-    this.syncToggleButton(button);
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void this.toggleHideImageLabels();
+    injectControlButton(controls, {
+      attr: BUTTON_ATTR,
+      sync: (button) => this.syncToggleButton(button),
+      onClick: () => void this.toggleHideImageLabels()
     });
-    group.appendChild(button);
-    controls.appendChild(group);
   }
   injectAuraToggle(leaf) {
     const view = leaf.view;
     const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
     if (!controls) return;
-    if (controls.querySelector(`[${AURA_BTN_ATTR}]`)) {
-      this.syncAuraToggleButton(controls.querySelector(`[${AURA_BTN_ATTR}]`));
-      return;
-    }
-    const group = document.createElement("div");
-    group.className = "canvas-control-group";
-    group.setAttribute(AURA_BTN_ATTR, "1");
-    const button = document.createElement("button");
-    button.className = "clickable-icon intuition-canvas-toggle intuition-canvas-aura-toggle";
-    button.type = "button";
-    this.syncAuraToggleButton(button);
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void this.toggleHideAuras();
+    injectControlButton(controls, {
+      attr: AURA_BTN_ATTR,
+      buttonClass: "clickable-icon intuition-canvas-toggle intuition-canvas-aura-toggle",
+      sync: (button) => this.syncAuraToggleButton(button),
+      onClick: () => void this.toggleHideAuras()
     });
-    group.appendChild(button);
-    controls.appendChild(group);
   }
   injectVibeToggle(leaf) {
     const view = leaf.view;
     const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
     if (!controls) return;
-    if (controls.querySelector(`[${VIBE_BTN_ATTR}]`)) {
-      this.syncVibeToggleButton(controls.querySelector(`[${VIBE_BTN_ATTR}]`));
-      return;
-    }
-    const group = document.createElement("div");
-    group.className = "canvas-control-group";
-    group.setAttribute(VIBE_BTN_ATTR, "1");
-    const button = document.createElement("button");
-    button.className = "clickable-icon intuition-canvas-toggle intuition-canvas-vibe-toggle";
-    button.type = "button";
-    this.syncVibeToggleButton(button);
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void this.toggleVibeMode();
+    injectControlButton(controls, {
+      attr: VIBE_BTN_ATTR,
+      buttonClass: "clickable-icon intuition-canvas-toggle intuition-canvas-vibe-toggle",
+      sync: (button) => this.syncVibeToggleButton(button),
+      onClick: () => void this.toggleVibeMode()
     });
-    group.appendChild(button);
-    controls.appendChild(group);
   }
   injectChromeToggle(leaf) {
     const view = leaf.view;
     const controls = view.canvas?.canvasControlsEl ?? view.containerEl.querySelector(".canvas-controls");
     if (!controls) return;
-    if (controls.querySelector(`[${CHROME_BTN_ATTR}]`)) return;
-    const group = document.createElement("div");
-    group.className = "canvas-control-group";
-    group.setAttribute(CHROME_BTN_ATTR, "1");
-    const button = document.createElement("button");
-    button.className = "clickable-icon intuition-canvas-toggle intuition-canvas-chrome-toggle";
-    button.type = "button";
-    (0, import_obsidian5.setIcon)(button, "palette");
-    (0, import_obsidian5.setTooltip)(button, "\u0424\u043E\u043D \u0438 \u0442\u043E\u0447\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430", { placement: "left" });
-    button.setAttribute("aria-label", "\u0424\u043E\u043D \u0438 \u0442\u043E\u0447\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430");
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.toggleCanvasPanel(leaf);
+    injectControlButton(controls, {
+      attr: CHROME_BTN_ATTR,
+      buttonClass: "clickable-icon intuition-canvas-toggle intuition-canvas-chrome-toggle",
+      sync: (button) => syncControlButton(button, {
+        title: "\u0424\u043E\u043D \u0438 \u0442\u043E\u0447\u043A\u0438 \u043A\u0430\u043D\u0432\u0430\u0441\u0430",
+        iconName: "palette"
+      }),
+      onClick: () => this.toggleCanvasPanel(leaf)
     });
-    group.appendChild(button);
-    controls.appendChild(group);
   }
   syncAllToggleButtons() {
     document.querySelectorAll(`[${BUTTON_ATTR}]`).forEach((el) => {
@@ -7647,251 +7675,30 @@ var IntuitionCanvasPlugin = class extends import_obsidian5.Plugin {
     });
   }
   syncToggleButton(el) {
-    const button = el instanceof HTMLButtonElement ? el : el.querySelector("button");
-    if (!button) return;
     const hidden = this.settings.hideImageLabels;
-    button.classList.toggle("is-active", hidden);
-    (0, import_obsidian5.setIcon)(button, hidden ? "eye-off" : "eye");
-    (0, import_obsidian5.setTooltip)(button, hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438" : "\u0421\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438", {
-      placement: "left"
+    syncControlButton(el, {
+      active: hidden,
+      title: hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438" : "\u0421\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438",
+      iconName: hidden ? "eye-off" : "eye"
     });
-    button.setAttribute(
-      "aria-label",
-      hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438" : "\u0421\u043A\u0440\u044B\u0442\u044C \u043F\u043E\u0434\u043F\u0438\u0441\u0438"
-    );
   }
   syncAuraToggleButton(el) {
-    const button = el instanceof HTMLButtonElement ? el : el.querySelector("button");
-    if (!button) return;
     const hidden = this.settings.hideAuras;
-    button.classList.toggle("is-active", hidden);
-    (0, import_obsidian5.setIcon)(button, hidden ? "zap-off" : "sparkles");
-    (0, import_obsidian5.setTooltip)(button, hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0430\u0443\u0440\u044B" : "\u0421\u043A\u0440\u044B\u0442\u044C \u0430\u0443\u0440\u044B", {
-      placement: "left"
+    syncControlButton(el, {
+      active: hidden,
+      title: hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0430\u0443\u0440\u044B" : "\u0421\u043A\u0440\u044B\u0442\u044C \u0430\u0443\u0440\u044B",
+      iconName: hidden ? "zap-off" : "sparkles"
     });
-    button.setAttribute(
-      "aria-label",
-      hidden ? "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0430\u0443\u0440\u044B" : "\u0421\u043A\u0440\u044B\u0442\u044C \u0430\u0443\u0440\u044B"
-    );
   }
   syncVibeToggleButton(el) {
-    const button = el instanceof HTMLButtonElement ? el : el.querySelector("button");
-    if (!button) return;
     const on = this.settings.vibeMode;
-    button.classList.toggle("is-active", on);
-    (0, import_obsidian5.setIcon)(button, "wand-2");
-    (0, import_obsidian5.setTooltip)(
-      button,
-      on ? "\u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0432\u0430\u0439\u0431-\u043D\u0430\u043A\u043B\u043E\u043D" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u0443 \u043A\u0443\u0440\u0441\u043E\u0440\u0430",
-      { placement: "left" }
-    );
-    button.setAttribute(
-      "aria-label",
-      on ? "\u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0432\u0430\u0439\u0431-\u043D\u0430\u043A\u043B\u043E\u043D" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u0443 \u043A\u0443\u0440\u0441\u043E\u0440\u0430"
-    );
-  }
-  // ── Smart image resize via DOM (cursor on handle) ───────────────────
-  // More reliable than patching Obsidian internals.
-  installDomResizeHook(leaf) {
-    const view = leaf.view;
-    const root = view.canvas?.wrapperEl ?? view.containerEl.querySelector(".canvas-wrapper") ?? view.containerEl;
-    if (root.getAttribute(DOM_HOOK_ATTR) === "1") return;
-    root.setAttribute(DOM_HOOK_ATTR, "1");
-    this.registerDomEvent(root, "pointerdown", (event) => {
-      this.onCanvasPointerDown(view, event);
+    syncControlButton(el, {
+      active: on,
+      title: on ? "\u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0432\u0430\u0439\u0431-\u043D\u0430\u043A\u043B\u043E\u043D" : "\u0412\u0430\u0439\u0431-\u0440\u0435\u0436\u0438\u043C: \u043D\u0430\u043A\u043B\u043E\u043D \u0443 \u043A\u0443\u0440\u0441\u043E\u0440\u0430",
+      iconName: "wand-2"
     });
   }
-  onCanvasPointerDown(view, event) {
-    if (this.aspectResizeActive) return;
-    const cursorInfo = this.findResizeCursor(event);
-    if (!cursorInfo) return;
-    const node = this.getSelectedImageNode(view);
-    if (!node || node.width <= 0 || node.height <= 0) return;
-    console.log(
-      "[intuition-canvas] resize start:",
-      cursorInfo.kind,
-      cursorInfo.cursor,
-      node.file?.path ?? node.filePath ?? node.id
-    );
-    if (cursorInfo.kind === "side-h") {
-      this.startSideFreeStretch(node, "horizontal");
-    } else if (cursorInfo.kind === "side-v") {
-      this.startSideFreeStretch(node, "vertical");
-    } else {
-      this.startCornerAspectLock(node, cursorInfo.cursor);
-    }
-  }
-  findResizeCursor(event) {
-    let el = event.target;
-    for (let i = 0; i < 6 && el; i++) {
-      const cursor = window.getComputedStyle(el).cursor.toLowerCase();
-      const kind = this.classifyCursor(cursor);
-      if (kind) return { kind, cursor };
-      const cls = el.className?.toString?.().toLowerCase?.() ?? "";
-      if (/resiz/.test(cls)) {
-        if (/left|right|e-|w-|east|west/.test(cls) && !/top|bottom|n-|s-/.test(cls)) {
-          return { kind: "side-h", cursor: cls };
-        }
-        if (/top|bottom|n-|s-|north|south/.test(cls) && !/left|right|e-|w-/.test(cls)) {
-          return { kind: "side-v", cursor: cls };
-        }
-        if (/corner|nw|ne|sw|se/.test(cls)) {
-          return { kind: "corner", cursor: cls };
-        }
-      }
-      el = el.parentElement;
-    }
-    return null;
-  }
-  classifyCursor(cursor) {
-    if (!cursor || cursor === "auto" || cursor === "default") return null;
-    if (cursor === "ew-resize" || cursor === "e-resize" || cursor === "w-resize" || cursor === "col-resize") {
-      return "side-h";
-    }
-    if (cursor === "ns-resize" || cursor === "n-resize" || cursor === "s-resize" || cursor === "row-resize") {
-      return "side-v";
-    }
-    if (cursor === "nwse-resize" || cursor === "nesw-resize" || cursor === "nw-resize" || cursor === "ne-resize" || cursor === "sw-resize" || cursor === "se-resize") {
-      return "corner";
-    }
-    if (cursor.includes("resize")) {
-      return "corner";
-    }
-    return null;
-  }
   getSelectedImageNodes(view) {
-    const canvas = view.canvas;
-    if (!canvas?.nodes) return [];
-    const out = [];
-    const seen = /* @__PURE__ */ new Set();
-    const push = (node) => {
-      if (!this.isImageNode(node) || seen.has(node.id)) return;
-      seen.add(node.id);
-      out.push(node);
-    };
-    if (canvas.selection) {
-      for (const item of canvas.selection) push(item);
-    }
-    if (out.length === 0) {
-      for (const node of canvas.nodes.values()) {
-        if (node.nodeEl?.classList.contains("is-selected")) push(node);
-      }
-    }
-    return out;
-  }
-  getSelectedImageNode(view) {
-    return this.getSelectedImageNodes(view)[0] ?? null;
-  }
-  isImageNode(node) {
-    return isImageNode(node);
-  }
-  startSideFreeStretch(node, axis) {
-    if (this.aspectResizeActive) return;
-    this.aspectResizeActive = true;
-    const start = {
-      x: node.x,
-      y: node.y,
-      w: node.width,
-      h: node.height
-    };
-    const enforce = () => {
-      if (axis === "horizontal") {
-        node.height = start.h;
-        node.y = start.y;
-      } else {
-        node.width = start.w;
-        node.x = start.x;
-      }
-      node.render?.();
-    };
-    let raf = 0;
-    const tick = () => {
-      enforce();
-      raf = window.requestAnimationFrame(tick);
-    };
-    raf = window.requestAnimationFrame(tick);
-    const onMove = () => enforce();
-    window.addEventListener("pointermove", onMove);
-    const stop = () => {
-      window.cancelAnimationFrame(raf);
-      window.removeEventListener("pointermove", onMove);
-      enforce();
-      this.aspectResizeActive = false;
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-      node.canvas?.requestSave?.();
-    };
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-  }
-  startCornerAspectLock(node, _cursorHint) {
-    if (this.aspectResizeActive) return;
-    this.aspectResizeActive = true;
-    const start = {
-      x: node.x,
-      y: node.y,
-      w: node.width,
-      h: node.height
-    };
-    const ratio = start.w / start.h;
-    const tickApply = () => {
-      const leftMoved = Math.abs(node.x - start.x) > 1;
-      const topMoved = Math.abs(node.y - start.y) > 1;
-      this.applyAspectLock(node, start, ratio, leftMoved, topMoved);
-    };
-    let raf = 0;
-    const tick = () => {
-      tickApply();
-      raf = window.requestAnimationFrame(tick);
-    };
-    raf = window.requestAnimationFrame(tick);
-    const onMove = () => tickApply();
-    window.addEventListener("pointermove", onMove);
-    const stop = () => {
-      window.cancelAnimationFrame(raf);
-      window.removeEventListener("pointermove", onMove);
-      tickApply();
-      this.aspectResizeActive = false;
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-      node.canvas?.requestSave?.();
-    };
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-  }
-  applyAspectLock(node, start, ratio, movesLeft, movesTop) {
-    const rightEdge = movesLeft ? start.x + start.w : node.x + node.width;
-    const bottomEdge = movesTop ? start.y + start.h : node.y + node.height;
-    const heightFromWidth = node.width / ratio;
-    const widthFromHeight = node.height * ratio;
-    const widthIsPrimary = Math.abs(heightFromWidth - node.height) <= Math.abs(widthFromHeight - node.width);
-    let width;
-    let height;
-    if (widthIsPrimary) {
-      width = Math.max(20, node.width);
-      height = width / ratio;
-    } else {
-      height = Math.max(20, node.height);
-      width = height * ratio;
-    }
-    node.x = movesLeft ? rightEdge - width : start.x;
-    node.y = movesTop ? bottomEdge - height : start.y;
-    node.width = width;
-    node.height = height;
-    node.render?.();
+    return this.imageResize.getSelectedImageNodes(view);
   }
 };
-function readElementScale(el) {
-  const t = getComputedStyle(el).transform;
-  if (!t || t === "none") return 0;
-  const m2 = t.match(/matrix3d\(([^)]+)\)/);
-  if (m2) {
-    const a2 = Number.parseFloat(m2[1].split(",")[0] ?? "");
-    if (Number.isFinite(a2) && Math.abs(a2) > 1e-3) return Math.abs(a2);
-  }
-  const m = t.match(/matrix\(([^)]+)\)/);
-  if (!m) return 0;
-  const a = Number.parseFloat(m[1].split(",")[0] ?? "");
-  if (!Number.isFinite(a) || Math.abs(a) <= 1e-3) return 0;
-  return Math.abs(a);
-}
