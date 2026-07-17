@@ -1151,7 +1151,7 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			attr: SWAP_BTN_ATTR,
 			sync: (button) => {
 				syncControlButton(button, {
-					title: "Поменять две фото местами",
+					title: "Поменять две фото местами (или Alt+drag)",
 					iconName: "arrow-left-right",
 				});
 			},

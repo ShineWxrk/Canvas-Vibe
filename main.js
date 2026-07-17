@@ -6631,12 +6631,15 @@ var PREVIEW_MS = 320;
 var ImageSwapController = class {
   constructor(deps) {
     this.deps = deps;
-    this.active = false;
+    this.tracking = false;
+    this.altHeld = false;
     this.source = null;
     this.startX = 0;
     this.startY = 0;
     this.pointerStartX = 0;
     this.pointerStartY = 0;
+    this.lastClientX = 0;
+    this.lastClientY = 0;
     this.moved = false;
     this.view = null;
     this.homeLeft = 0;
@@ -6645,11 +6648,14 @@ var ImageSwapController = class {
     this.homeHeight = 0;
     this.hoverTarget = null;
     this.preview = null;
+    this.keysHooked = false;
   }
+  /** True only while Alt-swap preview/mode is engaged (not every drag). */
   get isActive() {
-    return this.active;
+    return this.tracking && this.altHeld;
   }
   install(leaf) {
+    this.ensureAltKeys();
     const view = leaf.view;
     const root = canvasRoot(view);
     root.querySelectorAll(
@@ -6666,9 +6672,14 @@ var ImageSwapController = class {
     document.querySelectorAll(`.${GHOST_CLS}`).forEach((el) => el.remove());
     if (root.getAttribute(HOOK_ATTR3) === "1") return;
     root.setAttribute(HOOK_ATTR3, "1");
-    this.deps.registerDomEvent(root, "pointerdown", (event) => {
-      this.onPointerDown(view, event);
-    });
+    this.deps.registerDomEvent(
+      root,
+      "pointerdown",
+      (event) => {
+        this.onPointerDown(view, event);
+      },
+      true
+    );
   }
   swapTwoSelected(view) {
     const images = getSelectedImages(view);
@@ -6689,16 +6700,53 @@ var ImageSwapController = class {
     a.canvas?.requestSave?.();
     return true;
   }
+  /**
+   * Track Alt even when pressed mid-drag without moving the mouse —
+   * pointer events won't fire until the cursor moves.
+   */
+  ensureAltKeys() {
+    if (this.keysHooked) return;
+    this.keysHooked = true;
+    const onKeyDown = (event) => {
+      const ev = event;
+      if (!this.tracking) return;
+      const alt = ev.altKey || isAltKey(ev);
+      if (alt) {
+        ev.preventDefault();
+        this.altHeld = true;
+        this.refreshHoverFromLastPointer();
+      } else {
+        this.altHeld = ev.altKey;
+      }
+    };
+    const onKeyUp = (event) => {
+      const ev = event;
+      if (!this.tracking) return;
+      if (isAltKey(ev)) {
+        this.altHeld = false;
+        this.hoverTarget = null;
+        this.setPreviewTarget(null);
+        return;
+      }
+      this.altHeld = ev.altKey;
+      if (!this.altHeld) {
+        this.hoverTarget = null;
+        this.setPreviewTarget(null);
+      }
+    };
+    this.deps.registerDomEvent(window, "keydown", onKeyDown, true);
+    this.deps.registerDomEvent(window, "keyup", onKeyUp, true);
+  }
   onPointerDown(view, event) {
-    if (this.active) return;
-    if (!event.altKey || event.button !== 0) return;
+    if (this.tracking) return;
+    if (event.button !== 0) return;
     if (this.deps.isResizeActive?.()) return;
     if (looksLikeResizeHandle(event.target)) return;
     const source = findImageNodeFromEvent(view, event);
     if (!source || source.width <= 0 || source.height <= 0) return;
-    if (!isNodeSelected(view, source)) return;
     const home = source.nodeEl?.getBoundingClientRect();
-    this.active = true;
+    this.tracking = true;
+    this.altHeld = event.altKey || event.getModifierState?.("Alt") === true;
     this.source = source;
     this.startX = source.x;
     this.startY = source.y;
@@ -6708,25 +6756,23 @@ var ImageSwapController = class {
     this.homeHeight = home?.height ?? source.height;
     this.pointerStartX = event.clientX;
     this.pointerStartY = event.clientY;
+    this.lastClientX = event.clientX;
+    this.lastClientY = event.clientY;
     this.moved = false;
     this.view = view;
     this.hoverTarget = null;
     const onMove = (ev) => {
-      if (!this.active || !this.source || !this.view) return;
+      if (!this.tracking || !this.source || !this.view) return;
+      this.lastClientX = ev.clientX;
+      this.lastClientY = ev.clientY;
+      this.altHeld = ev.altKey || ev.getModifierState?.("Alt") === true;
       const dx = ev.clientX - this.pointerStartX;
       const dy = ev.clientY - this.pointerStartY;
       if (dx * dx + dy * dy >= MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
         this.moved = true;
       }
       if (!this.moved) return;
-      const hit = findImageAtPoint(
-        this.view,
-        ev.clientX,
-        ev.clientY,
-        this.source.id
-      );
-      this.hoverTarget = hit;
-      this.setPreviewTarget(hit);
+      this.refreshHover(ev.clientX, ev.clientY, this.altHeld);
     };
     const stop = (ev) => {
       window.removeEventListener("pointermove", onMove);
@@ -6737,6 +6783,33 @@ var ImageSwapController = class {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
+  }
+  refreshHoverFromLastPointer() {
+    if (!this.moved) {
+      const dx = this.lastClientX - this.pointerStartX;
+      const dy = this.lastClientY - this.pointerStartY;
+      if (dx * dx + dy * dy >= MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
+        this.moved = true;
+      }
+    }
+    if (!this.moved) return;
+    this.refreshHover(this.lastClientX, this.lastClientY, this.altHeld);
+  }
+  refreshHover(clientX, clientY, alt) {
+    if (!this.source || !this.view) return;
+    if (!alt) {
+      this.hoverTarget = null;
+      this.setPreviewTarget(null);
+      return;
+    }
+    const hit = findImageAtPoint(
+      this.view,
+      clientX,
+      clientY,
+      this.source.id
+    );
+    this.hoverTarget = hit;
+    this.setPreviewTarget(hit);
   }
   setPreviewTarget(next) {
     const cur = this.preview;
@@ -6767,7 +6840,6 @@ var ImageSwapController = class {
       ghost.style.height = `${this.homeHeight}px`;
     });
   }
-  /** Fly ghost home (or snap-remove). */
   dismissGhost(state, animate) {
     const { node, ghost, fromLeft, fromTop, fromWidth, fromHeight } = state;
     node.nodeEl?.classList.remove(DIM_CLS);
@@ -6800,12 +6872,14 @@ var ImageSwapController = class {
     const startY = this.startY;
     const moved = this.moved;
     const hovered = this.hoverTarget;
-    this.active = false;
+    const wantSwap = event.altKey || event.getModifierState?.("Alt") === true || this.altHeld;
+    this.tracking = false;
+    this.altHeld = false;
     this.source = null;
     this.view = null;
     this.hoverTarget = null;
     this.clearPreviewImmediate();
-    if (!source || !view || !moved) return;
+    if (!source || !view || !moved || !wantSwap) return;
     const target = hovered ?? findImageAtPoint(view, event.clientX, event.clientY, source.id);
     if (!target) return;
     const tx = target.x;
@@ -6854,6 +6928,9 @@ function buildGhost(sourceEl, rect) {
   ].join(";");
   return ghost;
 }
+function isAltKey(ev) {
+  return ev.key === "Alt" || ev.code === "AltLeft" || ev.code === "AltRight";
+}
 function getSelectedImages(view) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -6885,15 +6962,6 @@ function looksLikeResizeHandle(target) {
     el = el.parentElement;
   }
   return false;
-}
-function isNodeSelected(view, node) {
-  const sel = view.canvas?.selection;
-  if (sel) {
-    for (const item of sel) {
-      if (item.id === node.id) return true;
-    }
-  }
-  return !!node.nodeEl?.classList.contains("is-selected");
 }
 function findImageNodeFromEvent(view, event) {
   const nodes = view.canvas?.nodes;
@@ -7779,7 +7847,7 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
       attr: SWAP_BTN_ATTR,
       sync: (button) => {
         syncControlButton(button, {
-          title: "\u041F\u043E\u043C\u0435\u043D\u044F\u0442\u044C \u0434\u0432\u0435 \u0444\u043E\u0442\u043E \u043C\u0435\u0441\u0442\u0430\u043C\u0438",
+          title: "\u041F\u043E\u043C\u0435\u043D\u044F\u0442\u044C \u0434\u0432\u0435 \u0444\u043E\u0442\u043E \u043C\u0435\u0441\u0442\u0430\u043C\u0438 (\u0438\u043B\u0438 Alt+drag)",
           iconName: "arrow-left-right"
         });
       },

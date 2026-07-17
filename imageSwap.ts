@@ -56,16 +56,20 @@ type GhostPreview = {
 };
 
 /**
- * Alt+drag swap. Preview uses a floating ghost clone (never touches
- * canvas-node transform / x/y until commit — those blank or break Canvas).
+ * Alt+drag swap. Alt may be held from the start or pressed mid-drag.
+ * Preview uses a floating ghost clone (never touches canvas-node
+ * transform / x/y until commit).
  */
 export class ImageSwapController {
-	private active = false;
+	private tracking = false;
+	private altHeld = false;
 	private source: CanvasNodeLike | null = null;
 	private startX = 0;
 	private startY = 0;
 	private pointerStartX = 0;
 	private pointerStartY = 0;
+	private lastClientX = 0;
+	private lastClientY = 0;
 	private moved = false;
 	private view: CanvasViewLike | null = null;
 	private homeLeft = 0;
@@ -74,18 +78,20 @@ export class ImageSwapController {
 	private homeHeight = 0;
 	private hoverTarget: CanvasNodeLike | null = null;
 	private preview: GhostPreview | null = null;
+	private keysHooked = false;
 
 	constructor(private deps: ImageSwapDeps) {}
 
+	/** True only while Alt-swap preview/mode is engaged (not every drag). */
 	get isActive() {
-		return this.active;
+		return this.tracking && this.altHeld;
 	}
 
 	install(leaf: WorkspaceLeaf) {
+		this.ensureAltKeys();
 		const view = leaf.view as CanvasViewLike;
 		const root = canvasRoot(view);
 
-		/* Scrub leftovers from earlier preview experiments. */
 		root
 			.querySelectorAll<HTMLElement>(
 				".canvas-node.intuition-swap-preview, .canvas-node.intuition-swap-dimmed",
@@ -104,9 +110,14 @@ export class ImageSwapController {
 		if (root.getAttribute(HOOK_ATTR) === "1") return;
 		root.setAttribute(HOOK_ATTR, "1");
 
-		this.deps.registerDomEvent(root, "pointerdown", (event: Event) => {
-			this.onPointerDown(view, event as PointerEvent);
-		});
+		this.deps.registerDomEvent(
+			root,
+			"pointerdown",
+			(event: Event) => {
+				this.onPointerDown(view, event as PointerEvent);
+			},
+			true,
+		);
 	}
 
 	swapTwoSelected(view: CanvasViewLike): boolean {
@@ -129,18 +140,66 @@ export class ImageSwapController {
 		return true;
 	}
 
+	/**
+	 * Track Alt even when pressed mid-drag without moving the mouse —
+	 * pointer events won't fire until the cursor moves.
+	 */
+	private ensureAltKeys() {
+		if (this.keysHooked) return;
+		this.keysHooked = true;
+
+		const onKeyDown = (event: Event) => {
+			const ev = event as KeyboardEvent;
+			if (!this.tracking) return;
+
+			/* Sync from modifier state on any key — covers mid-drag Alt. */
+			const alt = ev.altKey || isAltKey(ev);
+			if (alt) {
+				/* Keep Windows from focusing the menu bar and killing the drag. */
+				ev.preventDefault();
+				this.altHeld = true;
+				this.refreshHoverFromLastPointer();
+			} else {
+				this.altHeld = ev.altKey;
+			}
+		};
+
+		const onKeyUp = (event: Event) => {
+			const ev = event as KeyboardEvent;
+			if (!this.tracking) return;
+			if (isAltKey(ev)) {
+				this.altHeld = false;
+				this.hoverTarget = null;
+				this.setPreviewTarget(null);
+				return;
+			}
+			this.altHeld = ev.altKey;
+			if (!this.altHeld) {
+				this.hoverTarget = null;
+				this.setPreviewTarget(null);
+			}
+		};
+
+		this.deps.registerDomEvent(window, "keydown", onKeyDown, true);
+		this.deps.registerDomEvent(window, "keyup", onKeyUp, true);
+	}
+
 	private onPointerDown(view: CanvasViewLike, event: PointerEvent) {
-		if (this.active) return;
-		if (!event.altKey || event.button !== 0) return;
+		if (this.tracking) return;
+		if (event.button !== 0) return;
 		if (this.deps.isResizeActive?.()) return;
 		if (looksLikeResizeHandle(event.target)) return;
 
 		const source = findImageNodeFromEvent(view, event);
 		if (!source || source.width <= 0 || source.height <= 0) return;
-		if (!isNodeSelected(view, source)) return;
+		/*
+		 * Do not require is-selected: the first click+drag often selects in
+		 * the same gesture, so selection may still be empty on pointerdown.
+		 */
 
 		const home = source.nodeEl?.getBoundingClientRect();
-		this.active = true;
+		this.tracking = true;
+		this.altHeld = event.altKey || event.getModifierState?.("Alt") === true;
 		this.source = source;
 		this.startX = source.x;
 		this.startY = source.y;
@@ -150,12 +209,19 @@ export class ImageSwapController {
 		this.homeHeight = home?.height ?? source.height;
 		this.pointerStartX = event.clientX;
 		this.pointerStartY = event.clientY;
+		this.lastClientX = event.clientX;
+		this.lastClientY = event.clientY;
 		this.moved = false;
 		this.view = view;
 		this.hoverTarget = null;
 
 		const onMove = (ev: PointerEvent) => {
-			if (!this.active || !this.source || !this.view) return;
+			if (!this.tracking || !this.source || !this.view) return;
+			this.lastClientX = ev.clientX;
+			this.lastClientY = ev.clientY;
+			this.altHeld =
+				ev.altKey || ev.getModifierState?.("Alt") === true;
+
 			const dx = ev.clientX - this.pointerStartX;
 			const dy = ev.clientY - this.pointerStartY;
 			if (dx * dx + dy * dy >= MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
@@ -163,14 +229,7 @@ export class ImageSwapController {
 			}
 			if (!this.moved) return;
 
-			const hit = findImageAtPoint(
-				this.view,
-				ev.clientX,
-				ev.clientY,
-				this.source.id,
-			);
-			this.hoverTarget = hit;
-			this.setPreviewTarget(hit);
+			this.refreshHover(ev.clientX, ev.clientY, this.altHeld);
 		};
 
 		const stop = (ev: PointerEvent) => {
@@ -183,6 +242,37 @@ export class ImageSwapController {
 		window.addEventListener("pointermove", onMove);
 		window.addEventListener("pointerup", stop);
 		window.addEventListener("pointercancel", stop);
+	}
+
+	private refreshHoverFromLastPointer() {
+		/* Alt mid-drag should arm preview even if the cursor hasn't moved
+		 * since the key was pressed (as long as we've left the deadzone). */
+		if (!this.moved) {
+			const dx = this.lastClientX - this.pointerStartX;
+			const dy = this.lastClientY - this.pointerStartY;
+			if (dx * dx + dy * dy >= MOVE_THRESHOLD_PX * MOVE_THRESHOLD_PX) {
+				this.moved = true;
+			}
+		}
+		if (!this.moved) return;
+		this.refreshHover(this.lastClientX, this.lastClientY, this.altHeld);
+	}
+
+	private refreshHover(clientX: number, clientY: number, alt: boolean) {
+		if (!this.source || !this.view) return;
+		if (!alt) {
+			this.hoverTarget = null;
+			this.setPreviewTarget(null);
+			return;
+		}
+		const hit = findImageAtPoint(
+			this.view,
+			clientX,
+			clientY,
+			this.source.id,
+		);
+		this.hoverTarget = hit;
+		this.setPreviewTarget(hit);
 	}
 
 	private setPreviewTarget(next: CanvasNodeLike | null) {
@@ -211,7 +301,6 @@ export class ImageSwapController {
 			fromHeight: rect.height,
 		};
 
-		/* Next frame → fly into the vacated source slot. */
 		requestAnimationFrame(() => {
 			if (this.preview?.ghost !== ghost) return;
 			ghost.style.left = `${this.homeLeft}px`;
@@ -221,7 +310,6 @@ export class ImageSwapController {
 		});
 	}
 
-	/** Fly ghost home (or snap-remove). */
 	private dismissGhost(state: GhostPreview, animate: boolean) {
 		const { node, ghost, fromLeft, fromTop, fromWidth, fromHeight } = state;
 		node.nodeEl?.classList.remove(DIM_CLS);
@@ -259,15 +347,20 @@ export class ImageSwapController {
 		const startY = this.startY;
 		const moved = this.moved;
 		const hovered = this.hoverTarget;
+		const wantSwap =
+			event.altKey ||
+			event.getModifierState?.("Alt") === true ||
+			this.altHeld;
 
-		this.active = false;
+		this.tracking = false;
+		this.altHeld = false;
 		this.source = null;
 		this.view = null;
 		this.hoverTarget = null;
 
 		this.clearPreviewImmediate();
 
-		if (!source || !view || !moved) return;
+		if (!source || !view || !moved || !wantSwap) return;
 
 		const target =
 			hovered ??
@@ -327,6 +420,14 @@ function buildGhost(sourceEl: HTMLElement, rect: DOMRect): HTMLElement {
 	return ghost;
 }
 
+function isAltKey(ev: KeyboardEvent): boolean {
+	return (
+		ev.key === "Alt" ||
+		ev.code === "AltLeft" ||
+		ev.code === "AltRight"
+	);
+}
+
 function getSelectedImages(view: CanvasViewLike): CanvasNodeLike[] {
 	const out: CanvasNodeLike[] = [];
 	const seen = new Set<string>();
@@ -365,16 +466,6 @@ function looksLikeResizeHandle(target: EventTarget | null): boolean {
 	return false;
 }
 
-function isNodeSelected(view: CanvasViewLike, node: CanvasNodeLike): boolean {
-	const sel = view.canvas?.selection;
-	if (sel) {
-		for (const item of sel) {
-			if ((item as CanvasNodeLike).id === node.id) return true;
-		}
-	}
-	return !!node.nodeEl?.classList.contains("is-selected");
-}
-
 function findImageNodeFromEvent(
 	view: CanvasViewLike,
 	event: PointerEvent,
@@ -405,7 +496,6 @@ function findImageNodeFromEvent(
 	return null;
 }
 
-/** Same DOM hit-test as the first working Alt swap. */
 function findImageAtPoint(
 	view: CanvasViewLike,
 	clientX: number,
