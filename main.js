@@ -6622,13 +6622,63 @@ function applyAspectLock(node, start, ratio, movesLeft, movesTop) {
   node.render?.();
 }
 
+// canvasNodePlace.ts
+var DEFAULT_RETRY_MS = [0, 16, 48, 120];
+function scrubNodeChrome(node, extraClasses = []) {
+  const el = node.nodeEl;
+  if (!el) return;
+  for (const cls of extraClasses) el.classList.remove(cls);
+  el.style.removeProperty("transform");
+  el.style.removeProperty("transition");
+  el.style.removeProperty("opacity");
+  el.style.removeProperty("will-change");
+}
+function placeNodeRect(node, rect) {
+  const nx = Math.round(rect.x);
+  const ny = Math.round(rect.y);
+  const nw = typeof rect.width === "number" ? Math.max(1, Math.round(rect.width)) : void 0;
+  const nh = typeof rect.height === "number" ? Math.max(1, Math.round(rect.height)) : void 0;
+  if (typeof node.setData === "function") {
+    const prev = node.getData?.() ?? { id: node.id };
+    const next = { ...prev, x: nx, y: ny };
+    if (nw !== void 0) next.width = nw;
+    if (nh !== void 0) next.height = nh;
+    node.setData(next);
+  } else if (typeof node.moveTo === "function" && nw === void 0) {
+    node.moveTo(nx, ny);
+  }
+  node.x = nx;
+  node.y = ny;
+  if (nw !== void 0) node.width = nw;
+  if (nh !== void 0) node.height = nh;
+  node.render?.();
+}
+function commitNodeRects(updates, canvas, opts) {
+  if (updates.length === 0) return;
+  const retryMs = opts?.retryMs ?? DEFAULT_RETRY_MS;
+  const scrubClasses = opts?.scrubClasses ?? [];
+  const apply = () => {
+    for (const u of updates) {
+      scrubNodeChrome(u.node, scrubClasses);
+      placeNodeRect(u.node, u);
+    }
+    canvas?.markViewportChanged?.();
+    canvas?.requestFrame?.();
+    canvas?.requestSave?.();
+    updates[0]?.node.canvas?.requestSave?.();
+  };
+  apply();
+  for (const ms of retryMs) {
+    window.setTimeout(apply, ms);
+  }
+}
+
 // imageSwap.ts
 var HOOK_ATTR3 = "data-intuition-canvas-swap-hook";
 var GHOST_CLS = "intuition-swap-ghost";
 var DIM_CLS = "intuition-swap-dimmed";
 var MOVE_THRESHOLD_PX = 8;
 var PREVIEW_MS = 320;
-var COMMIT_RETRY_MS = [0, 16, 48, 120];
 var ImageSwapController = class {
   constructor(deps) {
     this.deps = deps;
@@ -6878,24 +6928,14 @@ var ImageSwapController = class {
   }
 };
 function commitSwap(a, b, aHomeX, aHomeY, bHomeX, bHomeY, canvas) {
-  const ax = Math.round(aHomeX);
-  const ay = Math.round(aHomeY);
-  const bx = Math.round(bHomeX);
-  const by = Math.round(bHomeY);
-  const apply = () => {
-    scrubNodeChrome(a);
-    scrubNodeChrome(b);
-    placeNode(a, bx, by);
-    placeNode(b, ax, ay);
-    canvas?.markViewportChanged?.();
-    canvas?.requestFrame?.();
-    canvas?.requestSave?.();
-    a.canvas?.requestSave?.();
-  };
-  apply();
-  for (const ms of COMMIT_RETRY_MS) {
-    window.setTimeout(apply, ms);
-  }
+  commitNodeRects(
+    [
+      { node: a, x: bHomeX, y: bHomeY },
+      { node: b, x: aHomeX, y: aHomeY }
+    ],
+    canvas,
+    { scrubClasses: [DIM_CLS, "intuition-swap-preview"] }
+  );
 }
 function readNodeX(node) {
   const data = node.getData?.();
@@ -6906,28 +6946,6 @@ function readNodeY(node) {
   const data = node.getData?.();
   if (typeof data?.y === "number" && Number.isFinite(data.y)) return data.y;
   return node.y;
-}
-function placeNode(node, x, y) {
-  const nx = Math.round(x);
-  const ny = Math.round(y);
-  if (typeof node.setData === "function") {
-    const prev = node.getData?.() ?? { id: node.id };
-    node.setData({ ...prev, x: nx, y: ny });
-  } else if (typeof node.moveTo === "function") {
-    node.moveTo(nx, ny);
-  }
-  node.x = nx;
-  node.y = ny;
-  node.render?.();
-}
-function scrubNodeChrome(node) {
-  const el = node.nodeEl;
-  if (!el) return;
-  el.classList.remove(DIM_CLS, "intuition-swap-preview");
-  el.style.removeProperty("transform");
-  el.style.removeProperty("transition");
-  el.style.removeProperty("opacity");
-  el.style.removeProperty("will-change");
 }
 function buildGhost(sourceEl, rect) {
   const ghost = document.createElement("div");
@@ -8032,16 +8050,19 @@ var IntuitionCanvasPlugin = class extends import_obsidian7.Plugin {
         gap
       });
     }
+    const updates = [];
     for (const node of ordered) {
       const rect = packed.get(node.id);
       if (!rect) continue;
-      node.x = Math.round(rect.x);
-      node.y = Math.round(rect.y);
-      node.width = Math.max(1, Math.round(rect.width));
-      node.height = Math.max(1, Math.round(rect.height));
-      node.render?.();
+      updates.push({
+        node,
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      });
     }
-    view.canvas?.requestSave?.();
+    commitNodeRects(updates, view.canvas);
     const axisNote = axis === "rows" ? ` \xB7 ${count} \u0441\u0442\u0440.` : ` \xB7 ${count} \u0441\u0442\u043B\u0431.`;
     new import_obsidian7.Notice(
       `\u041A\u043E\u043B\u043B\u0430\u0436: ${ordered.length} \u0444\u043E\u0442\u043E \xB7 \u043E\u0442\u0441\u0442\u0443\u043F\u044B ${gap}px${axisNote}`,

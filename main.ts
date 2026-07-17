@@ -81,6 +81,7 @@ import {
 	ImageResizeController,
 } from "./imageResize";
 import { ImageSwapController } from "./imageSwap";
+import { commitNodeRects, type PlaceableNode } from "./canvasNodePlace";
 
 const CANVAS_VIEW_TYPE = "canvas";
 const BUTTON_ATTR = "data-intuition-canvas-labels-toggle";
@@ -1344,17 +1345,27 @@ export default class IntuitionCanvasPlugin extends Plugin {
 			});
 		}
 
+		const updates: {
+			node: PlaceableNode;
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+		}[] = [];
 		for (const node of ordered) {
 			const rect = packed.get(node.id);
 			if (!rect) continue;
-			node.x = Math.round(rect.x);
-			node.y = Math.round(rect.y);
-			node.width = Math.max(1, Math.round(rect.width));
-			node.height = Math.max(1, Math.round(rect.height));
-			node.render?.();
+			updates.push({
+				node: node as PlaceableNode,
+				x: rect.x,
+				y: rect.y,
+				width: rect.width,
+				height: rect.height,
+			});
 		}
 
-		view.canvas?.requestSave?.();
+		commitNodeRects(updates, view.canvas);
+
 		const axisNote =
 			axis === "rows" ? ` · ${count} стр.` : ` · ${count} стлб.`;
 		new Notice(

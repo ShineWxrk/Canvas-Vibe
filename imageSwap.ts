@@ -1,6 +1,7 @@
 /** Alt+drag an image onto another to swap their canvas positions. */
 
 import type { WorkspaceLeaf } from "obsidian";
+import { commitNodeRects } from "./canvasNodePlace";
 import { isImageNode, type ImageNodeLike } from "./imageStyles";
 import { canvasRoot } from "./pluginUtils";
 
@@ -9,8 +10,6 @@ const GHOST_CLS = "intuition-swap-ghost";
 const DIM_CLS = "intuition-swap-dimmed";
 const MOVE_THRESHOLD_PX = 8;
 const PREVIEW_MS = 320;
-/** Re-apply after Obsidian finishes its native drag commit. */
-const COMMIT_RETRY_MS = [0, 16, 48, 120];
 
 interface CanvasNodeData {
 	id?: string;
@@ -382,11 +381,6 @@ export class ImageSwapController {
 	}
 }
 
-/**
- * Persist a two-node place-swap through setData (not just node.x/y) and
- * re-apply a few times so Obsidian's native drag commit cannot leave the
- * model/DOM out of sync — that desync is what blanks nodes on pan/zoom.
- */
 function commitSwap(
 	a: CanvasNodeLike,
 	b: CanvasNodeLike,
@@ -396,26 +390,14 @@ function commitSwap(
 	bHomeY: number,
 	canvas?: CanvasLike | null,
 ) {
-	const ax = Math.round(aHomeX);
-	const ay = Math.round(aHomeY);
-	const bx = Math.round(bHomeX);
-	const by = Math.round(bHomeY);
-
-	const apply = () => {
-		scrubNodeChrome(a);
-		scrubNodeChrome(b);
-		placeNode(a, bx, by);
-		placeNode(b, ax, ay);
-		canvas?.markViewportChanged?.();
-		canvas?.requestFrame?.();
-		canvas?.requestSave?.();
-		a.canvas?.requestSave?.();
-	};
-
-	apply();
-	for (const ms of COMMIT_RETRY_MS) {
-		window.setTimeout(apply, ms);
-	}
+	commitNodeRects(
+		[
+			{ node: a, x: bHomeX, y: bHomeY },
+			{ node: b, x: aHomeX, y: aHomeY },
+		],
+		canvas,
+		{ scrubClasses: [DIM_CLS, "intuition-swap-preview"] },
+	);
 }
 
 function readNodeX(node: CanvasNodeLike): number {
@@ -428,31 +410,6 @@ function readNodeY(node: CanvasNodeLike): number {
 	const data = node.getData?.();
 	if (typeof data?.y === "number" && Number.isFinite(data.y)) return data.y;
 	return node.y;
-}
-
-function placeNode(node: CanvasNodeLike, x: number, y: number) {
-	const nx = Math.round(x);
-	const ny = Math.round(y);
-	if (typeof node.setData === "function") {
-		const prev = node.getData?.() ?? { id: node.id };
-		node.setData({ ...prev, x: nx, y: ny });
-	} else if (typeof node.moveTo === "function") {
-		node.moveTo(nx, ny);
-	}
-	node.x = nx;
-	node.y = ny;
-	node.render?.();
-}
-
-/** Clear leftover inline styles that desync Canvas culling from paint. */
-function scrubNodeChrome(node: CanvasNodeLike) {
-	const el = node.nodeEl;
-	if (!el) return;
-	el.classList.remove(DIM_CLS, "intuition-swap-preview");
-	el.style.removeProperty("transform");
-	el.style.removeProperty("transition");
-	el.style.removeProperty("opacity");
-	el.style.removeProperty("will-change");
 }
 
 function buildGhost(sourceEl: HTMLElement, rect: DOMRect): HTMLElement {
