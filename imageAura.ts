@@ -304,18 +304,37 @@ function boostSaturation(
 	};
 }
 
+/**
+ * Lift dark colors enough to read on a dark canvas without washing hue to white.
+ * Previous mix-toward-255 (up to 62%) made every aura look milky.
+ */
 function lightenForDarkCanvas(c: {
 	r: number;
 	g: number;
 	b: number;
 }): { r: number; g: number; b: number } {
-	const luma = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
-	const amount = luma < 0.2 ? 0.62 : luma < 0.4 ? 0.48 : 0.34;
-	return {
-		r: clampByte(c.r + (255 - c.r) * amount),
-		g: clampByte(c.g + (255 - c.g) * amount),
-		b: clampByte(c.b + (255 - c.b) * amount),
-	};
+	const { h, s, l } = rgbToHsl(c);
+	/* Keep chroma; only raise very dark colors into a glow-friendly lightness band. */
+	const nextL = l < 0.28 ? 0.42 + l * 0.35 : l < 0.45 ? l + 0.1 : Math.min(0.62, l);
+	const nextS = Math.min(1, Math.max(s * 1.12, s < 0.2 ? s : 0.4));
+	return hslToRgb(h, nextS, nextL);
+}
+
+function rgbToHsl(c: {
+	r: number;
+	g: number;
+	b: number;
+}): { h: number; s: number; l: number } {
+	const r = c.r / 255;
+	const g = c.g / 255;
+	const b = c.b / 255;
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const l = (max + min) / 2;
+	const d = max - min;
+	const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+	const h = rgbToHue(c.r, c.g, c.b);
+	return { h, s, l };
 }
 
 function rgbToHue(r: number, g: number, b: number): number {

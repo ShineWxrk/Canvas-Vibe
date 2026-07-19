@@ -1238,7 +1238,7 @@ body.intuition-crop-pan-active.is-dragging-crop
 				0%,
 			transparent 76%
 		);
-	filter: blur(32px) saturate(1.25);
+	filter: blur(32px) saturate(1.55);
 }
 
 /* v2: drifting color blobs — no mix-blend (expensive with many layers) */
@@ -1246,7 +1246,7 @@ body.intuition-crop-pan-active.is-dragging-crop
 	position: absolute;
 	border-radius: 50%;
 	pointer-events: none;
-	filter: blur(36px) saturate(1.2);
+	filter: blur(36px) saturate(1.5);
 }
 
 /* Fullscreen presentation: bigger soft glow so edges don't look hard. */
